@@ -1,0 +1,8 @@
+[package]
+name = "verilog-to-superconducting"
+author = "Rikus Honey <22550119 at sun.ac.za>"
+version = "0.1.0"
+edition = "2021"
+
+[workspace]
+members = ["crates/verilog"]
