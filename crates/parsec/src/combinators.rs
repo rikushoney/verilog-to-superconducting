@@ -78,3 +78,32 @@ pub fn between<P: Parsec, P1: Parsec, P2: Parsec>(
 ) -> Between<P, P1, P2> {
     Between(parser, left, right)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_and() {
+        let mut state = ParseState::new("ab");
+        assert_eq!('a'.and('b').parse(&mut state), Some(('a', 'b')));
+    }
+
+    #[test]
+    fn test_left() {
+        let mut state = ParseState::new("ab");
+        assert_eq!('a'.left('b').parse(&mut state), Some('a'));
+    }
+
+    #[test]
+    fn test_right() {
+        let mut state = ParseState::new("ab");
+        assert_eq!('a'.right('b').parse(&mut state), Some('b'));
+    }
+
+    #[test]
+    fn test_between() {
+        let mut state = ParseState::new("[a]");
+        assert_eq!('a'.between('[', ']').parse(&mut state), Some('a'));
+    }
+}

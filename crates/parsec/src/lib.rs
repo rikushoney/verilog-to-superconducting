@@ -31,6 +31,13 @@ pub trait Parsec {
         Map(self, mapper)
     }
 
+    fn and<P: Parsec>(self, other: P) -> And<Self, P>
+    where
+        Self: Sized,
+    {
+        combinators::and(self, other)
+    }
+
     fn left<P: Parsec>(self, other: P) -> Left<Self, P>
     where
         Self: Sized,
@@ -65,6 +72,16 @@ impl<P: Parsec> Parsec for &mut P {
 
     fn parse(&mut self, state: &mut ParseState) -> Option<Self::Output> {
         (**self).parse(state)
+    }
+}
+
+impl Parsec for char {
+    type Output = char;
+
+    fn parse(&mut self, state: &mut ParseState) -> Option<Self::Output> {
+        state
+            .next()
+            .and_then(|ch| if *self == ch { Some(ch) } else { None })
     }
 }
 
@@ -126,5 +143,51 @@ impl<'a, 'b, P: Parsec> Iterator for Iter<'a, 'b, P> {
 
     fn next(&mut self) -> Option<Self::Item> {
         self.0.parse(self.1)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_char() {
+        let mut state = ParseState::new("a");
+        assert_eq!('a'.parse(&mut state), Some('a'));
+        assert_eq!(state.next(), None);
+    }
+
+    #[test]
+    fn test_attempt() {
+        let mut state = ParseState::new("a");
+        assert_eq!(attempt('a').parse(&mut state), Some('a'));
+        assert_eq!(state.next(), None);
+
+        let mut state = ParseState::new("b");
+        assert_eq!(attempt('a').parse(&mut state), None);
+        assert_eq!(state.next(), Some('b'));
+    }
+
+    #[test]
+    fn test_then() {
+        let mut state = ParseState::new("a");
+        assert_eq!('a'.then(|ch| { Some(ch) }).parse(&mut state), Some('a'));
+    }
+
+    #[test]
+    fn test_map() {
+        let mut state = ParseState::new("a");
+        assert_eq!('a'.map(|ch| { ch }).parse(&mut state), Some('a'));
+    }
+
+    #[test]
+    fn test_iter() {
+        let mut state = ParseState::new("aaab");
+        let mut iter = 'a'.iter(&mut state);
+        assert_eq!(iter.next(), Some('a'));
+        assert_eq!(iter.next(), Some('a'));
+        assert_eq!(iter.next(), Some('a'));
+        assert_eq!(iter.next(), None);
+        assert_eq!(state.next(), Some('b'));
     }
 }
