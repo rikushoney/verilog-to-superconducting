@@ -1,3 +1,4 @@
 /target
 examples/**/_build
 *.vcd
+.svlangserver/
