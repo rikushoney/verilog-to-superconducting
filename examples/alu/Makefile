@@ -10,6 +10,6 @@ simulate: testbench
 	vvp _build/$(<F)
 
 clean:
-	rm -r _build crc_testbench_dump.vcd
+	rm -r _build alu_testbench_dump.vcd
 
 .PHONY: clean
