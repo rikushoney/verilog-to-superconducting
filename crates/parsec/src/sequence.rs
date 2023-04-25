@@ -15,7 +15,7 @@ impl<P: Parsec, TOut: Default + Extend<P::Output>> Parsec for Many<P, TOut> {
     }
 }
 
-pub fn many<P: Parsec, TOut: Default + Extend<P::Output>>(parser: P) -> Many<P, TOut> {
+pub fn many<P, TOut>(parser: P) -> Many<P, TOut> {
     Many(parser, PhantomData)
 }
 
@@ -33,7 +33,7 @@ impl<P: Parsec, TOut: Default + Extend<P::Output>> Parsec for ManyOne<P, TOut> {
     }
 }
 
-pub fn many_one<P: Parsec, TOut: Default + Extend<P::Output>>(parser: P) -> ManyOne<P, TOut> {
+pub fn many_one<P, TOut>(parser: P) -> ManyOne<P, TOut> {
     ManyOne(parser, PhantomData)
 }
 
@@ -50,7 +50,7 @@ impl<P: Parsec> Parsec for SkipMany<P> {
     }
 }
 
-pub fn skip_many<P: Parsec>(parser: P) -> SkipMany<P> {
+pub fn skip_many<P>(parser: P) -> SkipMany<P> {
     SkipMany(parser)
 }
 

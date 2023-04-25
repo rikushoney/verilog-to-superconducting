@@ -12,7 +12,7 @@ impl<P1: Parsec, P2: Parsec> Parsec for And<P1, P2> {
     }
 }
 
-pub fn and<P1: Parsec, P2: Parsec>(first: P1, second: P2) -> And<P1, P2> {
+pub fn and<P1, P2>(first: P1, second: P2) -> And<P1, P2> {
     And(first, second)
 }
 
@@ -26,6 +26,10 @@ impl<P1: Parsec<Output = TOut>, P2: Parsec<Output = TOut>, TOut> Parsec for Or<P
     }
 }
 
+pub fn or<P1, P2>(first: P1, second: P2) -> Or<P1, P2> {
+    Or(first, second)
+}
+
 pub struct Left<P1, P2>(P1, P2);
 
 impl<P1: Parsec, P2: Parsec> Parsec for Left<P1, P2> {
@@ -33,12 +37,12 @@ impl<P1: Parsec, P2: Parsec> Parsec for Left<P1, P2> {
 
     fn parse(&mut self, state: &mut ParseState) -> Option<Self::Output> {
         and(&mut self.0, &mut self.1)
-            .then(|(left, _)| Some(left))
+            .map(|(left, _)| Some(left))
             .parse(state)
     }
 }
 
-pub fn left<P1: Parsec, P2: Parsec>(left: P1, right: P2) -> Left<P1, P2> {
+pub fn left<P1, P2>(left: P1, right: P2) -> Left<P1, P2> {
     Left(left, right)
 }
 
@@ -49,12 +53,12 @@ impl<P1: Parsec, P2: Parsec> Parsec for Right<P1, P2> {
 
     fn parse(&mut self, state: &mut ParseState) -> Option<Self::Output> {
         and(&mut self.0, &mut self.1)
-            .then(|(_, right)| Some(right))
+            .map(|(_, right)| Some(right))
             .parse(state)
     }
 }
 
-pub fn right<P1: Parsec, P2: Parsec>(left: P1, right: P2) -> Right<P1, P2> {
+pub fn right<P1, P2>(left: P1, right: P2) -> Right<P1, P2> {
     Right(left, right)
 }
 
@@ -71,11 +75,7 @@ impl<P: Parsec, P1: Parsec, P2: Parsec> Parsec for Between<P, P1, P2> {
     }
 }
 
-pub fn between<P: Parsec, P1: Parsec, P2: Parsec>(
-    parser: P,
-    left: P1,
-    right: P2,
-) -> Between<P, P1, P2> {
+pub fn between<P, P1, P2>(parser: P, left: P1, right: P2) -> Between<P, P1, P2> {
     Between(parser, left, right)
 }
 

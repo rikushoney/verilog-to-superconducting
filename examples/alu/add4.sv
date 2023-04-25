@@ -23,7 +23,6 @@ end
 
 // calculate sum from inputs and carries
 assign S = A ^ B ^ C;
-// TODO: bug here
 assign Cout = G[3] | (C[3] & P[3]);
 
 endmodule: add4

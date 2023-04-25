@@ -9,7 +9,7 @@ module alu4(
   input  logic [3:0] B,  // second input
   input  ALU_OP      op, // ALU operation
   output logic [3:0] S,  // result of ALU operation
-  output logic       C   // overflow flag
+  output logic       V   // overflow flag
 );
 
 // intermediate logic for working with adder
@@ -36,19 +36,19 @@ always_comb begin
   case(op)
     ADD: begin
       S = Sout;
-      C = Cout;
+      V = Cout;
     end
     SUB: begin
       S = Sout;
-      C = Cout;
+      V = Cout;
     end
     AND: begin
       S = A & B;
-      C = 0;
+      V = 0;
     end
     OR: begin
       S = A | B;
-      C = 0;
+      V = 0;
     end
   endcase
 end
