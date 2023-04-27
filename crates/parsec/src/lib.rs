@@ -25,6 +25,90 @@ pub trait Parser<State: ParseState> {
     type Output;
 
     fn parse(&mut self, state: State) -> ParseResult<Self::Output, State>;
+
+    fn and_then<F>(self, mapper: F) -> combinator::AndThen<Self, F>
+    where
+        Self: Sized,
+    {
+        combinator::and_then(self, mapper)
+    }
+
+    fn optional(self) -> combinator::Optional<Self>
+    where
+        Self: Sized,
+    {
+        combinator::optional(self)
+    }
+
+    fn left<R>(self) -> combinator::Either<Self, R>
+    where
+        Self: Sized,
+    {
+        combinator::left(self)
+    }
+
+    fn right<L>(self) -> combinator::Either<L, Self>
+    where
+        Self: Sized,
+    {
+        combinator::right(self)
+    }
+
+    fn then<F>(self, mapper: F) -> sequence::Then<Self, F>
+    where
+        Self: Sized,
+    {
+        sequence::then(self, mapper)
+    }
+
+    fn and<P>(self, other: P) -> sequence::And<Self, P>
+    where
+        Self: Sized,
+    {
+        sequence::and(self, other)
+    }
+
+    fn skip<P>(self, parser: P) -> sequence::Skip<Self, P>
+    where
+        Self: Sized,
+    {
+        sequence::skip(self, parser)
+    }
+
+    fn with<P>(self, parser: P) -> sequence::With<Self, P>
+    where
+        Self: Sized,
+    {
+        sequence::with(self, parser)
+    }
+
+    fn iter<'a>(self, state: &'a mut State) -> repeat::Iter<'a, State, Self>
+    where
+        Self: Sized,
+    {
+        repeat::iter(self, state)
+    }
+
+    fn many<Output>(self) -> repeat::Many<Self, Output>
+    where
+        Self: Sized,
+    {
+        repeat::many(self)
+    }
+
+    fn many1<Output>(self) -> repeat::Many1<Self, Output>
+    where
+        Self: Sized,
+    {
+        repeat::many1(self)
+    }
+
+    fn skip_many(self) -> repeat::SkipMany<Self>
+    where
+        Self: Sized,
+    {
+        repeat::skip_many(self)
+    }
 }
 
 impl<State: ParseState, P: Parser<State>> Parser<State> for &mut P {
@@ -76,6 +160,35 @@ pub mod combinator {
     pub fn optional<P>(parser: P) -> Optional<P> {
         Optional(parser)
     }
+
+    pub enum Either<L, R> {
+        Left(L),
+        Right(R),
+    }
+
+    impl<State, L, R, Output> Parser<State> for Either<L, R>
+    where
+        State: ParseState,
+        L: Parser<State, Output = Output>,
+        R: Parser<State, Output = Output>,
+    {
+        type Output = Output;
+
+        fn parse(&mut self, state: State) -> ParseResult<Self::Output, State> {
+            match *self {
+                Either::Left(ref mut left) => left.parse(state),
+                Either::Right(ref mut right) => right.parse(state),
+            }
+        }
+    }
+
+    pub fn left<L, R>(left: L) -> Either<L, R> {
+        Either::Left(left)
+    }
+
+    pub fn right<L, R>(right: R) -> Either<L, R> {
+        Either::Right(right)
+    }
 }
 
 pub mod sequence {
@@ -126,6 +239,10 @@ pub mod sequence {
         }
     }
 
+    pub fn skip<P1, P2>(first: P1, second: P2) -> Skip<P1, P2> {
+        Skip(first, second)
+    }
+
     pub struct With<P1, P2>(P1, P2);
 
     impl<State: ParseState, P1: Parser<State>, P2: Parser<State>> Parser<State> for With<P1, P2> {
@@ -136,6 +253,10 @@ pub mod sequence {
             let (second, state) = self.1.parse(state)?;
             Ok((second, state))
         }
+    }
+
+    pub fn with<P1, P2>(first: P1, second: P2) -> With<P1, P2> {
+        With(first, second)
     }
 }
 
@@ -175,7 +296,7 @@ pub mod repeat {
         fn parse(&mut self, state: State) -> ParseResult<Self::Output, State> {
             let mut container = Output::default();
             let mut state = state;
-            container.extend(iter(&mut self.0, &mut state));
+            container.extend((&mut self.0).iter(&mut state));
             Ok((container, state))
         }
     }
@@ -198,12 +319,91 @@ pub mod repeat {
             let (first, state) = self.0.parse(state)?;
             let mut container = Output::default();
             let mut state = state;
-            container.extend(iter::once(first).chain(iter(&mut self.0, &mut state)));
+            container.extend(iter::once(first).chain((&mut self.0).iter(&mut state)));
             Ok((container, state))
         }
     }
 
     pub fn many1<P, Output>(parser: P) -> Many1<P, Output> {
         Many1(parser, PhantomData)
+    }
+
+    pub struct SkipMany<P>(P);
+
+    impl<State: ParseState + Clone, P: Parser<State>> Parser<State> for SkipMany<P> {
+        type Output = ();
+
+        fn parse(&mut self, state: State) -> ParseResult<Self::Output, State> {
+            let mut state = state;
+            (&mut self.0)
+                .iter(&mut state)
+                .for_each(|_| { /* do nothing */ });
+            Ok(((), state))
+        }
+    }
+
+    pub fn skip_many<P>(parser: P) -> SkipMany<P> {
+        SkipMany(parser)
+    }
+}
+
+pub mod token {
+    use super::*;
+
+    pub struct Any<State>(PhantomData<State>);
+
+    impl<State: ParseState> Parser<State> for Any<State> {
+        type Output = State::Tok;
+
+        fn parse(&mut self, state: State) -> ParseResult<Self::Output, State> {
+            let mut state = state;
+            state
+                .next_token()
+                .map(|tok| (tok, state))
+                .ok_or(ParseError::empty())
+        }
+    }
+
+    pub struct OneOf<Tokens, State>(Tokens, PhantomData<State>);
+
+    impl<State, Tokens> Parser<State> for OneOf<Tokens, State>
+    where
+        State: ParseState,
+        Tokens: Clone + IntoIterator<Item = State::Tok>,
+        State::Tok: Clone + PartialEq,
+    {
+        type Output = State::Tok;
+
+        fn parse(&mut self, state: State) -> ParseResult<Self::Output, State> {
+            satisfy(|tok| self.0.clone().into_iter().any(|test| tok == test)).parse(state)
+        }
+    }
+
+    pub struct Satisfy<F>(F);
+
+    impl<State, F> Parser<State> for Satisfy<F>
+    where
+        State: ParseState,
+        F: FnMut(State::Tok) -> bool,
+        State::Tok: Clone,
+    {
+        type Output = State::Tok;
+
+        fn parse(&mut self, state: State) -> ParseResult<Self::Output, State> {
+            let mut state = state;
+            let (token, state) = state
+                .next_token()
+                .map(|token| (token, state))
+                .ok_or(ParseError::empty())?;
+            if (self.0)(token.clone()) {
+                Ok((token, state))
+            } else {
+                Err(ParseError::empty())
+            }
+        }
+    }
+
+    pub fn satisfy<F>(predicate: F) -> Satisfy<F> {
+        Satisfy(predicate)
     }
 }
