@@ -90,7 +90,7 @@ pub trait Parser<State: ParseState, Error: ParseError<State>> {
         sequence::with(self, parser)
     }
 
-    fn iter<'a>(self, state: &'a mut State) -> repeat::Iter<'a, State, Error, Self>
+    fn iter(self, state: &'_ mut State) -> repeat::Iter<'_, State, Error, Self>
     where
         Self: Sized,
     {
@@ -357,7 +357,7 @@ pub mod repeat {
 
     pub struct Iter<'a, State, Error, P>(P, &'a mut State, PhantomData<Error>);
 
-    impl<'a, State, Error, P> Iterator for Iter<'a, State, Error, P>
+    impl<State, Error, P> Iterator for Iter<'_, State, Error, P>
     where
         State: ParseState + Clone,
         Error: ParseError<State>,
@@ -376,7 +376,7 @@ pub mod repeat {
         }
     }
 
-    pub fn iter<'a, State, Error, P>(parser: P, state: &'a mut State) -> Iter<'a, State, Error, P> {
+    pub fn iter<State, Error, P>(parser: P, state: &'_ mut State) -> Iter<'_, State, Error, P> {
         Iter(parser, state, PhantomData)
     }
 
@@ -533,7 +533,7 @@ pub mod token {
             let (token, state) = state
                 .next_token()
                 .map(|token| (token, state))
-                .ok_or(ParseError::empty(position.clone()))?;
+                .ok_or(ParseError::empty(position))?;
             if (self.0)(token.clone()) {
                 Ok((token, state))
             } else {
