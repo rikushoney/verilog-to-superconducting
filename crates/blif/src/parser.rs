@@ -1,5 +1,7 @@
 #![allow(dead_code)]
 
+use crate::ast::*;
+
 use nom::{
     branch::alt,
     bytes::complete::tag,
@@ -28,12 +30,6 @@ macro_rules! unimplemented_command {
     };
 }
 
-#[derive(Clone, Debug, PartialEq)]
-pub struct SingleOutput<'a> {
-    inputs: &'a str,
-    output: char,
-}
-
 impl<'a> SingleOutput<'a> {
     fn parse(input: &'a str) -> IResult<&'a str, Self> {
         let input_plane = alt((char('0'), char('1'), char('-')));
@@ -41,13 +37,6 @@ impl<'a> SingleOutput<'a> {
         let (input, output) = terminated(alt((char('0'), char('1'))), multispace1)(input)?;
         Ok((input, Self { inputs, output }))
     }
-}
-
-#[derive(Clone, Debug, PartialEq)]
-pub struct LogicGate<'a> {
-    inputs: Vec<&'a str>,
-    output: &'a str,
-    pla_description: Vec<SingleOutput<'a>>,
 }
 
 impl<'a> LogicGate<'a> {
@@ -73,17 +62,11 @@ impl<'a> LogicGate<'a> {
     }
 }
 
-#[derive(Clone, Debug, PartialEq)]
-pub struct GenericLatch {}
-
 impl GenericLatch {
     fn parse(input: &str) -> IResult<&str, Self> {
         unimplemented_command!(input)
     }
 }
-
-#[derive(Clone, Debug, PartialEq)]
-pub struct LibraryGate {}
 
 impl LibraryGate {
     fn parse(input: &str) -> IResult<&str, Self> {
@@ -91,17 +74,11 @@ impl LibraryGate {
     }
 }
 
-#[derive(Clone, Debug, PartialEq)]
-pub struct ModelReference {}
-
 impl ModelReference {
     fn parse(input: &str) -> IResult<&str, Self> {
         unimplemented_command!(input)
     }
 }
-
-#[derive(Clone, Debug, PartialEq)]
-pub struct SubfileReference {}
 
 impl SubfileReference {
     fn parse(input: &str) -> IResult<&str, Self> {
@@ -109,17 +86,11 @@ impl SubfileReference {
     }
 }
 
-#[derive(Clone, Debug, PartialEq)]
-pub struct FsmDescription {}
-
 impl FsmDescription {
     fn parse(input: &str) -> IResult<&str, Self> {
         unimplemented_command!(input)
     }
 }
-
-#[derive(Clone, Debug, PartialEq)]
-pub struct ClockConstraint {}
 
 impl ClockConstraint {
     fn parse(input: &str) -> IResult<&str, Self> {
@@ -127,25 +98,10 @@ impl ClockConstraint {
     }
 }
 
-#[derive(Clone, Debug, PartialEq)]
-pub struct DelayConstraint {}
-
 impl DelayConstraint {
     fn parse(input: &str) -> IResult<&str, Self> {
         unimplemented_command!(input)
     }
-}
-
-#[derive(Clone, Debug, PartialEq)]
-pub enum Command<'a> {
-    LogicGate(LogicGate<'a>),
-    GenericLatch(GenericLatch),
-    LibraryGate(LibraryGate),
-    ModelReference(ModelReference),
-    SubfileReference(SubfileReference),
-    FsmDescription(FsmDescription),
-    ClockConstraint(ClockConstraint),
-    DelayConstraint(DelayConstraint),
 }
 
 macro_rules! command_parser {
@@ -175,15 +131,6 @@ impl<'a> Command<'a> {
             delay_constraint,
         ))(input)
     }
-}
-
-#[derive(Clone, Debug, PartialEq)]
-pub struct Model<'a> {
-    pub name: Option<&'a str>,
-    pub inputs: Vec<&'a str>,
-    pub outputs: Vec<&'a str>,
-    pub clocks: Vec<&'a str>,
-    pub commands: Vec<Command<'a>>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
