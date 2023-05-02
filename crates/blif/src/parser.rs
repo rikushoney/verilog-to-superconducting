@@ -2,9 +2,9 @@ use nom::{
     branch::alt,
     bytes::complete::tag,
     character::complete::{char, multispace1, satisfy},
-    combinator::{map, map_res, opt, recognize},
+    combinator::{map_res, opt, recognize},
     multi::{many0, many0_count, separated_list1},
-    sequence::{delimited, pair, preceded, terminated, tuple},
+    sequence::{delimited, pair, preceded, terminated},
     IResult,
 };
 use unicode_ident::{is_xid_continue, is_xid_start};
