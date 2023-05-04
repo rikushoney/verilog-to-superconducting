@@ -226,22 +226,32 @@ impl<'a> Model<'a> {
 mod tests {
     use super::*;
 
-    #[test]
-    fn test_node_name() {
-        let tests = [
+    macro_rules! test_parser {
+        ($test_name:ident, $test_fn:expr, $test_cases:expr) => {
+            #[test]
+            fn $test_name() {
+                let tests = $test_cases;
+                for (input, expected, rest) in tests {
+                    assert_eq!($test_fn(input), Ok((rest, expected)));
+                }
+            }
+        };
+    }
+
+    test_parser!(
+        test_node_name,
+        node_name,
+        [
             ("node_a node_b", "node_a", " node_b"),
             ("a[0] a[1]", "a[0]", " a[1]"),
             ("A.B.C\n", "A.B.C", "\n"),
-        ];
+        ]
+    );
 
-        for (input, expected, rest) in tests {
-            assert_eq!(node_name(input), Ok((rest, expected)));
-        }
-    }
-
-    #[test]
-    fn test_single_output() {
-        let tests = [
+    test_parser!(
+        test_single_output,
+        SingleOutput::parse,
+        [
             (
                 "10-1 0\n",
                 SingleOutput {
@@ -266,16 +276,13 @@ mod tests {
                 },
                 "",
             ),
-        ];
+        ]
+    );
 
-        for (input, expected, rest) in tests {
-            assert_eq!(SingleOutput::parse(input), Ok((rest, expected)));
-        }
-    }
-
-    #[test]
-    fn test_logic_gate() {
-        let tests = [
+    test_parser!(
+        test_logic_gate,
+        LogicGate::parse,
+        [
             (
                 r#".names a b c d
 00- 0
@@ -331,16 +338,13 @@ mod tests {
                 },
                 "",
             ),
-        ];
+        ]
+    );
 
-        for (input, expected, rest) in tests {
-            assert_eq!(LogicGate::parse(input), Ok((rest, expected)));
-        }
-    }
-
-    #[test]
-    fn test_model() {
-        let tests = [
+    test_parser!(
+        test_model,
+        Model::parse,
+        [
             (
                 r#".model myModel
 .inputs a b c
@@ -418,10 +422,6 @@ mod tests {
                 },
                 "",
             ),
-        ];
-
-        for (input, expected, rest) in tests {
-            assert_eq!(Model::parse(input), Ok((rest, expected)));
-        }
-    }
+        ]
+    );
 }
