@@ -5,47 +5,57 @@ use crate::ast::*;
 use nom::{
     branch::alt,
     bytes::complete::tag,
-    character::complete::{char, multispace1, satisfy},
-    combinator::{fail, map, map_res, opt, recognize},
-    multi::{many0, many0_count, many1, many1_count, separated_list1},
+    character::complete::{char, multispace1, satisfy, space1},
+    combinator::{fail, map, map_res, opt, recognize, verify},
+    error::context,
+    multi::{many0, many1, many1_count, separated_list1},
     sequence::{delimited, pair, preceded, terminated},
     IResult,
 };
 
-use unicode_ident::{is_xid_continue, is_xid_start};
-
-fn unicode_ident(input: &str) -> IResult<&str, &str> {
-    let ident_start = alt((satisfy(is_xid_start), char('_')));
-    let ident_continue = alt((satisfy(is_xid_continue), char('_')));
-    recognize(pair(ident_start, many0_count(ident_continue)))(input)
+fn node_name(input: &str) -> IResult<&str, &str> {
+    let non_whitespace = many1_count(satisfy(|ch| !ch.is_whitespace()));
+    recognize(non_whitespace)(input)
 }
 
 fn dot_command<'a>(command: &'static str) -> impl FnMut(&'a str) -> IResult<&'a str, &'a str> {
     preceded(char('.'), tag(command))
 }
 
+fn ensure_newline(input: &str) -> IResult<&str, &str> {
+    context(
+        "expected newline",
+        verify(multispace1, |spaces: &str| spaces.contains('\n')),
+    )(input)
+}
+
 macro_rules! unimplemented_command {
     ($input:expr) => {
-        map_res(fail::<_, &str, _>, |_| Err("unimplemented command"))($input)
+        context("unimplemented_command", fail)($input)
     };
 }
 
 impl<'a> SingleOutput<'a> {
     fn parse(input: &'a str) -> IResult<&'a str, Self> {
         let input_plane = alt((char('0'), char('1'), char('-')));
-        let (input, inputs) = terminated(recognize(many1_count(input_plane)), multispace1)(input)?;
-        let (input, output) = terminated(alt((char('0'), char('1'))), multispace1)(input)?;
+        let (input, inputs) = terminated(recognize(many1_count(input_plane)), space1)(input)?;
+        let (input, output) = terminated(alt((char('0'), char('1'))), ensure_newline)(input)?;
         Ok((input, Self { inputs, output }))
     }
 }
 
 impl<'a> LogicGate<'a> {
     fn parse(input: &'a str) -> IResult<&'a str, Self> {
+        // .exdc
+        let (input, exdc) = map(
+            opt(terminated(dot_command("exdc"), ensure_newline)),
+            |exdc| exdc.is_some(),
+        )(input)?;
         // .names <in-1> <in-2> ... <in-n> <output>
         let mut names = delimited(
-            pair(dot_command("names"), multispace1),
-            separated_list1(multispace1, unicode_ident),
-            multispace1,
+            pair(dot_command("names"), space1),
+            separated_list1(space1, node_name),
+            ensure_newline,
         );
         let (input, mut inputs) = names(input)?;
         // it is guarenteed that names contains at least a single element due to separated_list1
@@ -54,6 +64,7 @@ impl<'a> LogicGate<'a> {
         Ok((
             input,
             LogicGate {
+                exdc,
                 inputs,
                 output,
                 pla_description,
@@ -145,10 +156,10 @@ impl<'a> ModelField<'a> {
         let field_decl = |name| {
             terminated(
                 pair(
-                    terminated(dot_command(name), multispace1),
-                    separated_list1(multispace1, unicode_ident),
+                    terminated(dot_command(name), space1),
+                    separated_list1(space1, node_name),
                 ),
-                multispace1,
+                ensure_newline,
             )
         };
         // .inputs <decl-input-list>
@@ -157,15 +168,13 @@ impl<'a> ModelField<'a> {
         let outputs_decl = field_decl("outputs");
         // .clock <decl-clock-list>
         let clock_decl = field_decl("clock");
-        map_res(
-            alt((inputs_decl, outputs_decl, clock_decl)),
-            |(name, items)| match name {
-                "inputs" => Ok(ModelField::Inputs(items)),
-                "outputs" => Ok(ModelField::Outputs(items)),
-                "clock" => Ok(ModelField::Clock(items)),
-                _ => Err(format!("unexpected declaration \"{}\"", name)),
-            },
-        )(input)
+        let field_decl = alt((inputs_decl, outputs_decl, clock_decl));
+        map_res(field_decl, |(name, items)| match name {
+            "inputs" => Ok(ModelField::Inputs(items)),
+            "outputs" => Ok(ModelField::Outputs(items)),
+            "clock" => Ok(ModelField::Clock(items)),
+            _ => Err(format!("unexpected declaration \"{}\"", name)),
+        })(input)
     }
 }
 
@@ -173,11 +182,11 @@ impl<'a> Model<'a> {
     fn parse(input: &'a str) -> IResult<&str, Self> {
         // .model <decl-model-name>
         let mut model_decl = delimited(
-            pair(dot_command("model"), multispace1),
-            opt(unicode_ident),
-            multispace1,
+            pair(dot_command("model"), space1),
+            opt(node_name),
+            ensure_newline,
         );
-        let (input, model_name) = model_decl(input)?;
+        let (input, name) = model_decl(input)?;
         // .inputs <decl-input-list>
         // .outputs <decl-outputs-list>
         // .clock <decl-clock-list>
@@ -203,7 +212,7 @@ impl<'a> Model<'a> {
         Ok((
             input,
             Self {
-                name: model_name,
+                name,
                 inputs,
                 outputs,
                 clocks,
@@ -218,14 +227,15 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_unicode_ident() {
+    fn test_node_name() {
         let tests = [
-            ("myVariable#", "myVariable", "#"),
-            ("veränderlich", "veränderlich", ""),
+            ("node_a node_b", "node_a", " node_b"),
+            ("a[0] a[1]", "a[0]", " a[1]"),
+            ("A.B.C\n", "A.B.C", "\n"),
         ];
 
         for (input, expected, rest) in tests {
-            assert_eq!(unicode_ident(input), Ok((rest, expected)));
+            assert_eq!(node_name(input), Ok((rest, expected)));
         }
     }
 
@@ -273,6 +283,7 @@ mod tests {
 --1 1
 "#,
                 LogicGate {
+                    exdc: false,
                     inputs: vec!["a", "b", "c"],
                     output: "d",
                     pla_description: vec![
@@ -293,12 +304,14 @@ mod tests {
                 "",
             ),
             (
-                r#".names a b c e
+                r#".exdc
+.names a b c e
 0-1 1
 --0 1
 -01 1
 "#,
                 LogicGate {
+                    exdc: true,
                     inputs: vec!["a", "b", "c"],
                     output: "e",
                     pla_description: vec![
@@ -344,6 +357,7 @@ mod tests {
                     outputs: vec!["d", "e", "f"],
                     clocks: vec!["clk1", "clk2"],
                     commands: vec![Command::LogicGate(LogicGate {
+                        exdc: false,
                         inputs: vec!["a", "b", "c"],
                         output: "d",
                         pla_description: vec![
@@ -371,6 +385,7 @@ mod tests {
 .inputs a b
 .inputs c
 .clock clk2
+.exdc
 .names a b c d
 1-0 1
 -01 0
@@ -382,6 +397,7 @@ mod tests {
                     outputs: vec!["d", "e", "f"],
                     clocks: vec!["clk1", "clk2"],
                     commands: vec![Command::LogicGate(LogicGate {
+                        exdc: true,
                         inputs: vec!["a", "b", "c"],
                         output: "d",
                         pla_description: vec![

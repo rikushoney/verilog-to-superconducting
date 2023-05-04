@@ -8,6 +8,7 @@ pub struct SingleOutput<'a> {
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct LogicGate<'a> {
+    pub exdc: bool,
     pub inputs: Vec<&'a str>,
     pub output: &'a str,
     pub pla_description: Vec<SingleOutput<'a>>,
