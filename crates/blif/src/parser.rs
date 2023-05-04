@@ -6,7 +6,7 @@ use nom::{
     branch::alt,
     bytes::complete::tag,
     character::complete::{char, multispace1, satisfy, space1},
-    combinator::{fail, map, map_res, opt, recognize, verify},
+    combinator::{fail, map, map_res, opt, recognize, success, verify},
     error::context,
     multi::{many0, many1, many1_count, separated_list1},
     sequence::{delimited, pair, preceded, terminated},
@@ -73,9 +73,46 @@ impl<'a> LogicGate<'a> {
     }
 }
 
-impl GenericLatch {
+impl LatchType {
     fn parse(input: &str) -> IResult<&str, Self> {
-        unimplemented_command!(input)
+        let fe = map(tag("fe"), |_| LatchType::FallingEdge);
+        let re = map(tag("re"), |_| LatchType::RisingEdge);
+        let ah = map(tag("ah"), |_| LatchType::ActiveHigh);
+        let al = map(tag("al"), |_| LatchType::ActiveLow);
+        let asy = map(tag("as"), |_| LatchType::Asynchronous);
+        alt((fe, re, ah, al, asy))(input)
+    }
+}
+
+impl InitValue {
+    fn parse(input: &str) -> IResult<&str, Self> {
+        let zero = map(char('0'), |_| InitValue::Zero);
+        let one = map(char('1'), |_| InitValue::One);
+        let dc = map(char('2'), |_| InitValue::DontCare);
+        let unk = map(char('3'), |_| InitValue::Unknown);
+        alt((zero, one, dc, unk))(input)
+    }
+}
+
+impl<'a> GenericLatch<'a> {
+    fn parse(input: &'a str) -> IResult<&'a str, Self> {
+        let (input, _) = terminated(dot_command("latch"), space1)(input)?;
+        let (input, latch_input) = terminated(node_name, space1)(input)?;
+        let (input, output) = terminated(node_name, space1)(input)?;
+        let (input, ty) = terminated(LatchType::parse, space1)(input)?;
+        let (input, control) = terminated(node_name, space1)(input)?;
+        let (input, init) = alt((InitValue::parse, success(InitValue::default())))(input)?;
+        let (input, _) = ensure_newline(input)?;
+        Ok((
+            input,
+            GenericLatch {
+                input: latch_input,
+                output,
+                ty,
+                control,
+                init,
+            },
+        ))
     }
 }
 

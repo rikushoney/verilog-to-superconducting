@@ -15,7 +15,36 @@ pub struct LogicGate<'a> {
 }
 
 #[derive(Clone, Debug, PartialEq)]
-pub struct GenericLatch {}
+pub enum LatchType {
+    FallingEdge,
+    RisingEdge,
+    ActiveHigh,
+    ActiveLow,
+    Asynchronous,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub enum InitValue {
+    Zero,
+    One,
+    DontCare,
+    Unknown,
+}
+
+impl Default for InitValue {
+    fn default() -> Self {
+        InitValue::Unknown
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct GenericLatch<'a> {
+    pub input: &'a str,
+    pub output: &'a str,
+    pub ty: LatchType,
+    pub control: &'a str,
+    pub init: InitValue,
+}
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct LibraryGate {}
@@ -38,7 +67,7 @@ pub struct DelayConstraint {}
 #[derive(Clone, Debug, PartialEq)]
 pub enum Command<'a> {
     LogicGate(LogicGate<'a>),
-    GenericLatch(GenericLatch),
+    GenericLatch(GenericLatch<'a>),
     LibraryGate(LibraryGate),
     ModelReference(ModelReference),
     SubfileReference(SubfileReference),
