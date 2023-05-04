@@ -9,7 +9,7 @@ use nom::{
     combinator::{fail, map, map_res, opt, recognize, success, verify},
     error::context,
     multi::{many0, many1, many1_count, separated_list1},
-    sequence::{delimited, pair, preceded, terminated},
+    sequence::{delimited, pair, preceded, terminated, tuple},
     IResult,
 };
 
@@ -38,64 +38,74 @@ macro_rules! unimplemented_command {
 impl<'a> SingleOutput<'a> {
     fn parse(input: &'a str) -> IResult<&'a str, Self> {
         let input_plane = alt((char('0'), char('1'), char('-')));
-        let (input, inputs) = terminated(recognize(many1_count(input_plane)), space1)(input)?;
-        let (input, output) = terminated(alt((char('0'), char('1'))), ensure_newline)(input)?;
-        Ok((input, Self { inputs, output }))
+        map(
+            tuple((
+                terminated(recognize(many1_count(input_plane)), space1),
+                terminated(alt((char('0'), char('1'))), ensure_newline),
+            )),
+            |(inputs, output)| Self { inputs, output },
+        )(input)
     }
 }
 
 impl<'a> LogicGate<'a> {
     fn parse(input: &'a str) -> IResult<&'a str, Self> {
-        // .exdc
-        let (input, exdc) = map(
-            opt(terminated(dot_command("exdc"), ensure_newline)),
-            |exdc| exdc.is_some(),
-        )(input)?;
-        // .names <in-1> <in-2> ... <in-n> <output>
-        let mut names = delimited(
-            pair(dot_command("names"), space1),
-            separated_list1(space1, node_name),
-            ensure_newline,
-        );
-        let (input, mut inputs) = names(input)?;
-        // it is guarenteed that names contains at least a single element due to separated_list1
-        let output = inputs.pop().unwrap();
-        let (input, pla_description) = many1(SingleOutput::parse)(input)?;
-        Ok((
-            input,
-            LogicGate {
-                exdc,
-                inputs,
-                output,
-                pla_description,
+        map(
+            tuple((
+                // .exdc
+                map(
+                    opt(terminated(dot_command("exdc"), ensure_newline)),
+                    |exdc| exdc.is_some(),
+                ),
+                // .names <in-1> <in-2> ... <in-n> <output>
+                delimited(
+                    pair(dot_command("names"), space1),
+                    separated_list1(space1, node_name),
+                    ensure_newline,
+                ),
+                many1(SingleOutput::parse),
+            )),
+            |(exdc, mut inputs, pla_description)| {
+                // it is guarenteed that `inputs` contains at least a single element due to
+                // separated_list1
+                let output = inputs.pop().unwrap();
+                LogicGate {
+                    exdc,
+                    inputs,
+                    output,
+                    pla_description,
+                }
             },
-        ))
+        )(input)
     }
 }
 
 impl LatchType {
     fn parse(input: &str) -> IResult<&str, Self> {
-        let fe = map(tag("fe"), |_| LatchType::FallingEdge);
-        let re = map(tag("re"), |_| LatchType::RisingEdge);
-        let ah = map(tag("ah"), |_| LatchType::ActiveHigh);
-        let al = map(tag("al"), |_| LatchType::ActiveLow);
-        let asy = map(tag("as"), |_| LatchType::Asynchronous);
-        alt((fe, re, ah, al, asy))(input)
+        alt((
+            map(tag("fe"), |_| LatchType::FallingEdge),
+            map(tag("re"), |_| LatchType::RisingEdge),
+            map(tag("ah"), |_| LatchType::ActiveHigh),
+            map(tag("al"), |_| LatchType::ActiveLow),
+            map(tag("as"), |_| LatchType::Asynchronous),
+        ))(input)
     }
 }
 
 impl InitValue {
     fn parse(input: &str) -> IResult<&str, Self> {
-        let zero = map(char('0'), |_| InitValue::Zero);
-        let one = map(char('1'), |_| InitValue::One);
-        let dc = map(char('2'), |_| InitValue::DontCare);
-        let unk = map(char('3'), |_| InitValue::Unknown);
-        alt((zero, one, dc, unk))(input)
+        alt((
+            map(char('0'), |_| InitValue::Zero),
+            map(char('1'), |_| InitValue::One),
+            map(char('2'), |_| InitValue::DontCare),
+            map(char('3'), |_| InitValue::Unknown),
+        ))(input)
     }
 }
 
 impl<'a> GenericLatch<'a> {
     fn parse(input: &'a str) -> IResult<&'a str, Self> {
+        // TODO: cleanup
         let (input, _) = terminated(dot_command("latch"), space1)(input)?;
         let (input, latch_input) = terminated(node_name, space1)(input)?;
         let (input, output) = terminated(node_name, space1)(input)?;
@@ -190,6 +200,7 @@ enum ModelField<'a> {
 
 impl<'a> ModelField<'a> {
     fn parse(input: &'a str) -> IResult<&'a str, Self> {
+        // TODO: cleanup
         let field_decl = |name| {
             terminated(
                 pair(
@@ -217,6 +228,7 @@ impl<'a> ModelField<'a> {
 
 impl<'a> Model<'a> {
     fn parse(input: &'a str) -> IResult<&str, Self> {
+        // TODO: cleanup
         // .model <decl-model-name>
         let mut model_decl = delimited(
             pair(dot_command("model"), space1),
