@@ -6,7 +6,7 @@ use nom::{
     branch::alt,
     bytes::complete::tag,
     character::complete::{char, line_ending, not_line_ending, one_of, satisfy, space0, space1},
-    combinator::{fail, map, map_res, opt, recognize, success, value},
+    combinator::{eof, fail, map, map_res, opt, recognize, success, value},
     error::context,
     multi::{many0, many1, many1_count, separated_list1},
     sequence::{delimited, pair, preceded, terminated, tuple},
@@ -29,16 +29,19 @@ fn comment(input: &str) -> IResult<&str, &str> {
 }
 
 fn ensure_newline(input: &str) -> IResult<&str, &str> {
-    // treat end-of-file as newline in case a newline is missing
-    if input.is_empty() {
-        return Ok((input, ""));
-    }
-    // skip whitespace and comments and ensure there is at least a single newline
-    recognize(many1_count(delimited(
+    preceded(
         space0,
-        recognize(alt((line_ending, comment))),
-        space0,
-    )))(input)
+        alt((
+            // skip whitespace and comments and ensure that there is at least a single newline
+            recognize(many1_count(delimited(
+                space0,
+                recognize(alt((line_ending, comment))),
+                space0,
+            ))),
+            // treat end-of-file as newline in case a newline is missing
+            eof,
+        )),
+    )(input)
 }
 
 fn space1_escape(input: &str) -> IResult<&str, &str> {
@@ -443,7 +446,7 @@ e
         GenericLatch::parse,
         [
             (
-                ".latch a b ah clk 1",
+                ".latch a b ah clk 1 ",
                 GenericLatch {
                     input: "a",
                     output: "b",
