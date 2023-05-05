@@ -30,18 +30,21 @@ fn ensure_newline(input: &str) -> IResult<&str, &str> {
 }
 
 macro_rules! unimplemented_command {
-    ($input:expr) => {
+    ($input:expr) => {{
         context("unimplemented_command", fail)($input)
-    };
+    }};
 }
 
 impl<'a> SingleOutput<'a> {
     fn parse(input: &'a str) -> IResult<&'a str, Self> {
+        // {0, 1, -}
         let input_plane = alt((char('0'), char('1'), char('-')));
+        // {0, 1}
+        let output_plane = alt((char('0'), char('1')));
         map(
             tuple((
                 terminated(recognize(many1_count(input_plane)), space1),
-                terminated(alt((char('0'), char('1'))), ensure_newline),
+                terminated(output_plane, ensure_newline),
             )),
             |(inputs, output)| Self { inputs, output },
         )(input)
@@ -63,6 +66,7 @@ impl<'a> LogicGate<'a> {
                     separated_list1(space1, node_name),
                     ensure_newline,
                 ),
+                // <single-output-cover>
                 many1(SingleOutput::parse),
             )),
             |(exdc, mut inputs, pla_description)| {
@@ -105,24 +109,38 @@ impl InitValue {
 
 impl<'a> GenericLatch<'a> {
     fn parse(input: &'a str) -> IResult<&'a str, Self> {
-        // TODO: cleanup
-        let (input, _) = terminated(dot_command("latch"), space1)(input)?;
-        let (input, latch_input) = terminated(node_name, space1)(input)?;
-        let (input, output) = terminated(node_name, space1)(input)?;
-        let (input, ty) = terminated(LatchType::parse, space1)(input)?;
-        let (input, control) = terminated(node_name, space1)(input)?;
-        let (input, init) = alt((InitValue::parse, success(InitValue::default())))(input)?;
-        let (input, _) = ensure_newline(input)?;
-        Ok((
-            input,
-            GenericLatch {
-                input: latch_input,
-                output,
-                ty,
-                control,
-                init,
+        map(
+            delimited(
+                // .latch
+                terminated(dot_command("latch"), space1),
+                tuple((
+                    // input
+                    terminated(node_name, space1),
+                    // output
+                    terminated(node_name, space1),
+                    // type
+                    terminated(LatchType::parse, space1),
+                    // control
+                    terminated(node_name, space1),
+                    // init-val
+                    alt((InitValue::parse, success(InitValue::default()))),
+                )),
+                ensure_newline,
+            ),
+            |(input, output, ty, control, init)| {
+                let control = match control {
+                    "NIL" => LatchControl::GlobalClock,
+                    clock => LatchControl::Clock(clock),
+                };
+                GenericLatch {
+                    input,
+                    output,
+                    ty,
+                    control,
+                    init,
+                }
             },
-        ))
+        )(input)
     }
 }
 
@@ -163,30 +181,22 @@ impl DelayConstraint {
 }
 
 macro_rules! command_parser {
-    (let $name:ident = $struct:ident) => {
-        let $name = map($struct::parse, |$name| Command::$struct($name));
+    ($name:ident => $struct:ident) => {
+        map($struct::parse, |$name| Command::$struct($name))
     };
 }
 
 impl<'a> Command<'a> {
     fn parse(input: &'a str) -> IResult<&'a str, Self> {
-        command_parser!(let logic_gate = LogicGate);
-        command_parser!(let generic_latch = GenericLatch);
-        command_parser!(let library_gate = LibraryGate);
-        command_parser!(let model_reference = ModelReference);
-        command_parser!(let subfile_reference = SubfileReference);
-        command_parser!(let fsm_description = FsmDescription);
-        command_parser!(let clock_constraint = ClockConstraint);
-        command_parser!(let delay_constraint = DelayConstraint);
         alt((
-            logic_gate,
-            generic_latch,
-            library_gate,
-            model_reference,
-            subfile_reference,
-            fsm_description,
-            clock_constraint,
-            delay_constraint,
+            command_parser!(logic_gate => LogicGate),
+            command_parser!(generic_latch => GenericLatch),
+            command_parser!(library_gate => LibraryGate),
+            command_parser!(model_reference => ModelReference),
+            command_parser!(subfile_reference => SubfileReference),
+            command_parser!(fsm_description => FsmDescription),
+            command_parser!(clock_constraint => ClockConstraint),
+            command_parser!(delay_constraint => DelayConstraint),
         ))(input)
     }
 }
@@ -200,7 +210,6 @@ enum ModelField<'a> {
 
 impl<'a> ModelField<'a> {
     fn parse(input: &'a str) -> IResult<&'a str, Self> {
-        // TODO: cleanup
         let field_decl = |name| {
             terminated(
                 pair(
@@ -210,64 +219,70 @@ impl<'a> ModelField<'a> {
                 ensure_newline,
             )
         };
-        // .inputs <decl-input-list>
-        let inputs_decl = field_decl("inputs");
-        // .outputs <decl-output-list>
-        let outputs_decl = field_decl("outputs");
-        // .clock <decl-clock-list>
-        let clock_decl = field_decl("clock");
-        let field_decl = alt((inputs_decl, outputs_decl, clock_decl));
-        map_res(field_decl, |(name, items)| match name {
-            "inputs" => Ok(ModelField::Inputs(items)),
-            "outputs" => Ok(ModelField::Outputs(items)),
-            "clock" => Ok(ModelField::Clock(items)),
-            _ => Err(format!("unexpected declaration \"{}\"", name)),
-        })(input)
+        map_res(
+            alt((
+                // .inputs <decl-input-list>
+                field_decl("inputs"),
+                // .outputs <decl-output-list>
+                field_decl("outputs"),
+                // .clock <decl-clock-list>
+                field_decl("clock"),
+            )),
+            |(name, items)| match name {
+                "inputs" => Ok(ModelField::Inputs(items)),
+                "outputs" => Ok(ModelField::Outputs(items)),
+                "clock" => Ok(ModelField::Clock(items)),
+                _ => Err(format!("unexpected declaration \"{}\"", name)),
+            },
+        )(input)
     }
 }
 
 impl<'a> Model<'a> {
     fn parse(input: &'a str) -> IResult<&str, Self> {
-        // TODO: cleanup
-        // .model <decl-model-name>
-        let mut model_decl = delimited(
-            pair(dot_command("model"), space1),
-            opt(node_name),
-            ensure_newline,
-        );
-        let (input, name) = model_decl(input)?;
-        // .inputs <decl-input-list>
-        // .outputs <decl-outputs-list>
-        // .clock <decl-clock-list>
-        let (input, fields) = many0(ModelField::parse)(input)?;
-        let mut inputs = Vec::new();
-        let mut outputs = Vec::new();
-        let mut clocks = Vec::new();
-        for field in fields {
-            match field {
-                ModelField::Inputs(mut items) => inputs.append(&mut items),
-                ModelField::Outputs(mut items) => outputs.append(&mut items),
-                ModelField::Clock(mut items) => clocks.append(&mut items),
-            }
-        }
-        // <command>
-        //     .
-        //     .
-        //     .
-        // <command>
-        let (input, commands) = many1(Command::parse)(input)?;
-        // .end
-        let (input, _) = opt(dot_command("end"))(input)?;
-        Ok((
-            input,
-            Self {
-                name,
-                inputs,
-                outputs,
-                clocks,
-                commands,
+        map(
+            terminated(
+                tuple((
+                    // .model <decl-model-name>
+                    delimited(
+                        pair(dot_command("model"), space1),
+                        opt(node_name),
+                        ensure_newline,
+                    ),
+                    // .inputs <decl-input-list>
+                    // .outputs <decl-outputs-list>
+                    // .clock <decl-clock-list>
+                    many0(ModelField::parse),
+                    // <command>
+                    //     .
+                    //     .
+                    //     .
+                    // <command>
+                    many1(Command::parse),
+                )),
+                // .end
+                opt(dot_command("end")),
+            ),
+            |(name, fields, commands)| {
+                let mut inputs = Vec::new();
+                let mut outputs = Vec::new();
+                let mut clocks = Vec::new();
+                for field in fields {
+                    match field {
+                        ModelField::Inputs(mut items) => inputs.append(&mut items),
+                        ModelField::Outputs(mut items) => outputs.append(&mut items),
+                        ModelField::Clock(mut items) => clocks.append(&mut items),
+                    }
+                }
+                Self {
+                    name,
+                    inputs,
+                    outputs,
+                    clocks,
+                    commands,
+                }
             },
-        ))
+        )(input)
     }
 }
 

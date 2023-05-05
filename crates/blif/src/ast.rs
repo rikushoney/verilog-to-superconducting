@@ -38,11 +38,17 @@ impl Default for InitValue {
 }
 
 #[derive(Clone, Debug, PartialEq)]
+pub enum LatchControl<'a> {
+    Clock(&'a str),
+    GlobalClock,
+}
+
+#[derive(Clone, Debug, PartialEq)]
 pub struct GenericLatch<'a> {
     pub input: &'a str,
     pub output: &'a str,
     pub ty: LatchType,
-    pub control: &'a str,
+    pub control: LatchControl<'a>,
     pub init: InitValue,
 }
 
