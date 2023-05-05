@@ -114,13 +114,13 @@ impl LatchType {
     }
 }
 
-impl InitValue {
+impl LogicValue {
     fn parse(input: &str) -> IResult<&str, Self> {
         alt((
-            value(InitValue::Zero, char('0')),
-            value(InitValue::One, char('1')),
-            value(InitValue::DontCare, char('2')),
-            value(InitValue::Unknown, char('3')),
+            value(LogicValue::Zero, char('0')),
+            value(LogicValue::One, char('1')),
+            value(LogicValue::DontCare, char('2')),
+            value(LogicValue::Unknown, char('3')),
         ))(input)
     }
 }
@@ -140,8 +140,8 @@ impl<'a> GenericLatch<'a> {
                     terminated(LatchType::parse, space1_escape),
                     // control
                     terminated(node_name, opt(space1_escape)),
-                    // init-val
-                    alt((InitValue::parse, success(InitValue::default()))),
+                    // init-val (default: Unknown)
+                    alt((LogicValue::parse, success(LogicValue::default()))),
                 )),
                 ensure_newline,
             ),
@@ -449,7 +449,7 @@ e
                     output: "b",
                     ty: LatchType::ActiveHigh,
                     control: LatchControl::Clock("clk"),
-                    init: InitValue::One,
+                    init: LogicValue::One,
                 },
                 ""
             ),
@@ -460,7 +460,7 @@ e
                     output: "b",
                     ty: LatchType::RisingEdge,
                     control: LatchControl::GlobalClock,
-                    init: InitValue::Unknown,
+                    init: LogicValue::Unknown,
                 },
                 ""
             )
@@ -566,7 +566,7 @@ e
                         output: "d",
                         ty: LatchType::FallingEdge,
                         control: LatchControl::Clock("clk1"),
-                        init: InitValue::DontCare
+                        init: LogicValue::DontCare
                     })],
                 },
                 "",

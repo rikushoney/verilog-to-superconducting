@@ -24,16 +24,16 @@ pub enum LatchType {
 }
 
 #[derive(Clone, Debug, PartialEq)]
-pub enum InitValue {
+pub enum LogicValue {
     Zero,
     One,
     DontCare,
     Unknown,
 }
 
-impl Default for InitValue {
+impl Default for LogicValue {
     fn default() -> Self {
-        InitValue::Unknown
+        LogicValue::Unknown
     }
 }
 
@@ -49,7 +49,7 @@ pub struct GenericLatch<'a> {
     pub output: &'a str,
     pub ty: LatchType,
     pub control: LatchControl<'a>,
-    pub init: InitValue,
+    pub init: LogicValue,
 }
 
 #[derive(Clone, Debug, PartialEq)]
