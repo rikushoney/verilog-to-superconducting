@@ -6,7 +6,7 @@ use nom::{
     branch::alt,
     bytes::complete::tag,
     character::complete::{char, line_ending, not_line_ending, satisfy, space0, space1},
-    combinator::{fail, map, map_res, opt, recognize, success},
+    combinator::{fail, map, map_res, opt, recognize, success, value},
     error::context,
     multi::{many0, many1, many1_count, separated_list1},
     sequence::{delimited, pair, preceded, terminated, tuple},
@@ -14,18 +14,26 @@ use nom::{
 };
 
 fn node_name(input: &str) -> IResult<&str, &str> {
+    // node names can be anything except whitespace or '#'
     recognize(many1_count(satisfy(|ch| !ch.is_whitespace() && ch != '#')))(input)
 }
 
 fn dot_command<'a>(command: &'static str) -> impl FnMut(&'a str) -> IResult<&'a str, &'a str> {
+    // .<command>
     preceded(char('.'), tag(command))
 }
 
 fn comment(input: &str) -> IResult<&str, &str> {
+    // # ...
     delimited(char('#'), not_line_ending, line_ending)(input)
 }
 
 fn ensure_newline(input: &str) -> IResult<&str, &str> {
+    // treat end-of-file as newline in case a newline is missing
+    if input.is_empty() {
+        return Ok((input, ""));
+    }
+    // skip whitespace and comments and ensure there is at least a single newline
     recognize(many1_count(delimited(
         space0,
         recognize(alt((line_ending, comment))),
@@ -34,7 +42,7 @@ fn ensure_newline(input: &str) -> IResult<&str, &str> {
 }
 
 fn space1_escape(input: &str) -> IResult<&str, &str> {
-    // a '\' at the end of line indicates concatenation of the next line with the current
+    // treat '\' at the end of line as regular whitespace
     recognize(many1_count(alt((tag("\\\n"), space1))))(input)
 }
 
@@ -51,6 +59,7 @@ impl<'a> SingleOutput<'a> {
         // {0, 1}
         let output_plane = alt((char('0'), char('1')));
         map(
+            // <input-plane> <output-plane>
             tuple((
                 terminated(recognize(many1_count(input_plane)), space1_escape),
                 terminated(output_plane, ensure_newline),
@@ -96,11 +105,11 @@ impl<'a> LogicGate<'a> {
 impl LatchType {
     fn parse(input: &str) -> IResult<&str, Self> {
         alt((
-            map(tag("fe"), |_| LatchType::FallingEdge),
-            map(tag("re"), |_| LatchType::RisingEdge),
-            map(tag("ah"), |_| LatchType::ActiveHigh),
-            map(tag("al"), |_| LatchType::ActiveLow),
-            map(tag("as"), |_| LatchType::Asynchronous),
+            value(LatchType::FallingEdge, tag("fe")),
+            value(LatchType::RisingEdge, tag("re")),
+            value(LatchType::ActiveHigh, tag("ah")),
+            value(LatchType::ActiveLow, tag("al")),
+            value(LatchType::Asynchronous, tag("as")),
         ))(input)
     }
 }
@@ -108,10 +117,10 @@ impl LatchType {
 impl InitValue {
     fn parse(input: &str) -> IResult<&str, Self> {
         alt((
-            map(char('0'), |_| InitValue::Zero),
-            map(char('1'), |_| InitValue::One),
-            map(char('2'), |_| InitValue::DontCare),
-            map(char('3'), |_| InitValue::Unknown),
+            value(InitValue::Zero, char('0')),
+            value(InitValue::One, char('1')),
+            value(InitValue::DontCare, char('2')),
+            value(InitValue::Unknown, char('3')),
         ))(input)
     }
 }
@@ -130,7 +139,7 @@ impl<'a> GenericLatch<'a> {
                     // type
                     terminated(LatchType::parse, space1_escape),
                     // control
-                    terminated(node_name, space1_escape),
+                    terminated(node_name, opt(space1_escape)),
                     // init-val
                     alt((InitValue::parse, success(InitValue::default()))),
                 )),
@@ -430,6 +439,35 @@ e
     );
 
     test_parser!(
+        test_latch,
+        GenericLatch::parse,
+        [
+            (
+                ".latch a b ah clk 1",
+                GenericLatch {
+                    input: "a",
+                    output: "b",
+                    ty: LatchType::ActiveHigh,
+                    control: LatchControl::Clock("clk"),
+                    init: InitValue::One,
+                },
+                ""
+            ),
+            (
+                ".latch a b re NIL",
+                GenericLatch {
+                    input: "a",
+                    output: "b",
+                    ty: LatchType::RisingEdge,
+                    control: LatchControl::GlobalClock,
+                    init: InitValue::Unknown,
+                },
+                ""
+            )
+        ]
+    );
+
+    test_parser!(
         test_model,
         Model::parse,
         [
@@ -507,6 +545,28 @@ e
                                 output: '0',
                             },
                         ],
+                    })],
+                },
+                "",
+            ),
+            (
+                r#".model myModel
+.inputs a b c
+.outputs d e f
+.clock clk1 clk2
+.latch a d fe clk1 2
+.end"#,
+                Model {
+                    name: Some("myModel"),
+                    inputs: vec!["a", "b", "c"],
+                    outputs: vec!["d", "e", "f"],
+                    clocks: vec!["clk1", "clk2"],
+                    commands: vec![Command::GenericLatch(GenericLatch {
+                        input: "a",
+                        output: "d",
+                        ty: LatchType::FallingEdge,
+                        control: LatchControl::Clock("clk1"),
+                        init: InitValue::DontCare
                     })],
                 },
                 "",
