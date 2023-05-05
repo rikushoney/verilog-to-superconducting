@@ -5,7 +5,7 @@ use crate::ast::*;
 use nom::{
     branch::alt,
     bytes::complete::tag,
-    character::complete::{char, line_ending, not_line_ending, satisfy, space0, space1},
+    character::complete::{char, line_ending, not_line_ending, one_of, satisfy, space0, space1},
     combinator::{fail, map, map_res, opt, recognize, success, value},
     error::context,
     multi::{many0, many1, many1_count, separated_list1},
@@ -119,7 +119,7 @@ impl LogicValue {
         alt((
             value(LogicValue::Zero, char('0')),
             value(LogicValue::One, char('1')),
-            value(LogicValue::DontCare, char('2')),
+            value(LogicValue::DontCare, one_of("2-xX")),
             value(LogicValue::Unknown, char('3')),
         ))(input)
     }

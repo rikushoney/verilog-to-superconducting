@@ -23,18 +23,13 @@ pub enum LatchType {
     Asynchronous,
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub enum LogicValue {
     Zero,
     One,
     DontCare,
+    #[default]
     Unknown,
-}
-
-impl Default for LogicValue {
-    fn default() -> Self {
-        LogicValue::Unknown
-    }
 }
 
 #[derive(Clone, Debug, PartialEq)]
