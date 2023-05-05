@@ -29,6 +29,11 @@ fn ensure_newline(input: &str) -> IResult<&str, &str> {
     )(input)
 }
 
+fn space1_escape(input: &str) -> IResult<&str, &str> {
+    // a '\' at the end of line indicates concatenation of the next line with the current
+    recognize(many1_count(alt((tag("\\\n"), space1))))(input)
+}
+
 macro_rules! unimplemented_command {
     ($input:expr) => {{
         context("unimplemented_command", fail)($input)
@@ -43,7 +48,7 @@ impl<'a> SingleOutput<'a> {
         let output_plane = alt((char('0'), char('1')));
         map(
             tuple((
-                terminated(recognize(many1_count(input_plane)), space1),
+                terminated(recognize(many1_count(input_plane)), space1_escape),
                 terminated(output_plane, ensure_newline),
             )),
             |(inputs, output)| Self { inputs, output },
@@ -62,8 +67,8 @@ impl<'a> LogicGate<'a> {
                 ),
                 // .names <in-1> <in-2> ... <in-n> <output>
                 delimited(
-                    pair(dot_command("names"), space1),
-                    separated_list1(space1, node_name),
+                    pair(dot_command("names"), space1_escape),
+                    separated_list1(space1_escape, node_name),
                     ensure_newline,
                 ),
                 // <single-output-cover>
@@ -112,16 +117,16 @@ impl<'a> GenericLatch<'a> {
         map(
             delimited(
                 // .latch
-                terminated(dot_command("latch"), space1),
+                terminated(dot_command("latch"), space1_escape),
                 tuple((
                     // input
-                    terminated(node_name, space1),
+                    terminated(node_name, space1_escape),
                     // output
-                    terminated(node_name, space1),
+                    terminated(node_name, space1_escape),
                     // type
-                    terminated(LatchType::parse, space1),
+                    terminated(LatchType::parse, space1_escape),
                     // control
-                    terminated(node_name, space1),
+                    terminated(node_name, space1_escape),
                     // init-val
                     alt((InitValue::parse, success(InitValue::default()))),
                 )),
@@ -213,8 +218,8 @@ impl<'a> ModelField<'a> {
         let field_decl = |name| {
             terminated(
                 pair(
-                    terminated(dot_command(name), space1),
-                    separated_list1(space1, node_name),
+                    terminated(dot_command(name), space1_escape),
+                    separated_list1(space1_escape, node_name),
                 ),
                 ensure_newline,
             )
@@ -245,7 +250,7 @@ impl<'a> Model<'a> {
                 tuple((
                     // .model <decl-model-name>
                     delimited(
-                        pair(dot_command("model"), space1),
+                        pair(dot_command("model"), space1_escape),
                         opt(node_name),
                         ensure_newline,
                     ),
@@ -301,6 +306,12 @@ mod tests {
             }
         };
     }
+
+    test_parser!(
+        test_space1_escape,
+        space1_escape,
+        [("\t   \t\\\naaa", "\t   \t\\\n", "aaa")]
+    );
 
     test_parser!(
         test_node_name,
@@ -376,7 +387,8 @@ mod tests {
             ),
             (
                 r#".exdc
-.names a b c e
+.names a b c \
+e
 0-1 1
 --0 1
 -01 1
