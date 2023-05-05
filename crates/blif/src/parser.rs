@@ -5,8 +5,8 @@ use crate::ast::*;
 use nom::{
     branch::alt,
     bytes::complete::tag,
-    character::complete::{char, multispace1, satisfy, space1},
-    combinator::{fail, map, map_res, opt, recognize, success, verify},
+    character::complete::{char, line_ending, not_line_ending, satisfy, space0, space1},
+    combinator::{fail, map, map_res, opt, recognize, success},
     error::context,
     multi::{many0, many1, many1_count, separated_list1},
     sequence::{delimited, pair, preceded, terminated, tuple},
@@ -14,19 +14,23 @@ use nom::{
 };
 
 fn node_name(input: &str) -> IResult<&str, &str> {
-    let non_whitespace = many1_count(satisfy(|ch| !ch.is_whitespace()));
-    recognize(non_whitespace)(input)
+    recognize(many1_count(satisfy(|ch| !ch.is_whitespace() && ch != '#')))(input)
 }
 
 fn dot_command<'a>(command: &'static str) -> impl FnMut(&'a str) -> IResult<&'a str, &'a str> {
     preceded(char('.'), tag(command))
 }
 
+fn comment(input: &str) -> IResult<&str, &str> {
+    delimited(char('#'), not_line_ending, line_ending)(input)
+}
+
 fn ensure_newline(input: &str) -> IResult<&str, &str> {
-    context(
-        "expected newline",
-        verify(multispace1, |spaces: &str| spaces.contains('\n')),
-    )(input)
+    recognize(many1_count(delimited(
+        space0,
+        recognize(many1_count(alt((line_ending, comment)))),
+        space0,
+    )))(input)
 }
 
 fn space1_escape(input: &str) -> IResult<&str, &str> {
@@ -351,6 +355,14 @@ mod tests {
                 },
                 "",
             ),
+            (
+                "0-11 1\n# a comment\n",
+                SingleOutput {
+                    inputs: "0-11",
+                    output: '1',
+                },
+                "",
+            ),
         ]
     );
 
@@ -466,9 +478,10 @@ e
 .inputs c
 .clock clk2
 .exdc
-.names a b c d
+.names a b c d # this is a comment
 1-0 1
 -01 0
+# a freestanding comment
 -1- 0
 .end"#,
                 Model {
