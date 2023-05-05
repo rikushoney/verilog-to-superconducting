@@ -28,7 +28,7 @@ fn comment(input: &str) -> IResult<&str, &str> {
 fn ensure_newline(input: &str) -> IResult<&str, &str> {
     recognize(many1_count(delimited(
         space0,
-        recognize(many1_count(alt((line_ending, comment)))),
+        recognize(alt((line_ending, comment))),
         space0,
     )))(input)
 }
