@@ -88,7 +88,7 @@ impl<'a> LogicGate<'a> {
                 many1(SingleOutput::parse),
             )),
             |(exdc, mut inputs, pla_description)| {
-                // it is guarenteed that `inputs` contains at least a single element due to
+                // it is guaranteed that `inputs` contains at least a single element due to
                 // separated_list1
                 let output = inputs.pop().unwrap();
                 LogicGate {
