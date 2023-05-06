@@ -48,7 +48,23 @@ pub struct GenericLatch<'a> {
 }
 
 #[derive(Clone, Debug, PartialEq)]
-pub struct LibraryGate {}
+pub struct LibraryLatch<'a> {
+    pub control: LatchControl<'a>,
+    pub init: LogicValue,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub enum LibraryTechnology<'a> {
+    Gate,
+    Latch(LibraryLatch<'a>),
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct LibraryGate<'a> {
+    pub name: &'a str,
+    pub formal_actual: Vec<(&'a str, &'a str)>,
+    pub technology: LibraryTechnology<'a>,
+}
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct ModelReference {}
@@ -69,7 +85,7 @@ pub struct DelayConstraint {}
 pub enum Command<'a> {
     LogicGate(LogicGate<'a>),
     GenericLatch(GenericLatch<'a>),
-    LibraryGate(LibraryGate),
+    LibraryGate(LibraryGate<'a>),
     ModelReference(ModelReference),
     SubfileReference(SubfileReference),
     FsmDescription(FsmDescription),

@@ -9,13 +9,15 @@ use nom::{
     combinator::{eof, fail, map, map_res, opt, recognize, success, value},
     error::context,
     multi::{many0, many1, many1_count, separated_list1},
-    sequence::{delimited, pair, preceded, terminated, tuple},
+    sequence::{delimited, pair, preceded, separated_pair, terminated, tuple},
     IResult,
 };
 
-fn node_name(input: &str) -> IResult<&str, &str> {
-    // node names can be anything except whitespace or '#'
-    recognize(many1_count(satisfy(|ch| !ch.is_whitespace() && ch != '#')))(input)
+fn signal_name(input: &str) -> IResult<&str, &str> {
+    // signal names can be anything except whitespace, '#' or '='
+    recognize(many1_count(satisfy(|ch| {
+        !ch.is_whitespace() && "#=".chars().all(|invalid| ch != invalid)
+    })))(input)
 }
 
 fn dot_command<'a>(command: &'static str) -> impl FnMut(&'a str) -> IResult<&'a str, &'a str> {
@@ -84,7 +86,7 @@ impl<'a> LogicGate<'a> {
                 // .names <in-1> <in-2> ... <in-n> <output>
                 delimited(
                     pair(dot_command("names"), space1_escape),
-                    separated_list1(space1_escape, node_name),
+                    separated_list1(space1_escape, signal_name),
                     ensure_newline,
                 ),
                 // <single-output-cover>
@@ -128,6 +130,15 @@ impl LogicValue {
     }
 }
 
+impl<'a> LatchControl<'a> {
+    fn parse(input: &'a str) -> IResult<&'a str, Self> {
+        map(signal_name, |control| match control {
+            "NIL" => LatchControl::GlobalClock,
+            clock => LatchControl::Clock(clock),
+        })(input)
+    }
+}
+
 impl<'a> GenericLatch<'a> {
     fn parse(input: &'a str) -> IResult<&'a str, Self> {
         map(
@@ -136,38 +147,81 @@ impl<'a> GenericLatch<'a> {
                 terminated(dot_command("latch"), space1_escape),
                 tuple((
                     // input
-                    terminated(node_name, space1_escape),
+                    terminated(signal_name, space1_escape),
                     // output
-                    terminated(node_name, space1_escape),
+                    terminated(signal_name, space1_escape),
                     // type
                     terminated(LatchType::parse, space1_escape),
                     // control
-                    terminated(node_name, opt(space1_escape)),
+                    terminated(LatchControl::parse, opt(space1_escape)),
                     // init-val (default: Unknown)
                     alt((LogicValue::parse, success(LogicValue::default()))),
                 )),
                 ensure_newline,
             ),
-            |(input, output, ty, control, init)| {
-                let control = match control {
-                    "NIL" => LatchControl::GlobalClock,
-                    clock => LatchControl::Clock(clock),
-                };
-                GenericLatch {
-                    input,
-                    output,
-                    ty,
-                    control,
-                    init,
-                }
+            |(input, output, ty, control, init)| GenericLatch {
+                input,
+                output,
+                ty,
+                control,
+                init,
             },
         )(input)
     }
 }
 
-impl LibraryGate {
-    fn parse(input: &str) -> IResult<&str, Self> {
-        unimplemented_command!(input)
+impl<'a> LibraryGate<'a> {
+    fn parse(input: &'a str) -> IResult<&'a str, Self> {
+        // formal1=actual1 formal2=actual2 ...
+        let formal_actual = |input| {
+            separated_list1(
+                space1_escape,
+                separated_pair(signal_name, char('='), signal_name),
+            )(input)
+        };
+        // <control> [<init-val>]
+        let library_latch = |input| {
+            map(
+                tuple((
+                    terminated(LatchControl::parse, opt(space1_escape)),
+                    alt((LogicValue::parse, success(LogicValue::default()))),
+                )),
+                |(control, init)| LibraryTechnology::Latch(LibraryLatch { control, init }),
+            )(input)
+        };
+        map(
+            alt((
+                tuple((
+                    delimited(
+                        // .gate
+                        terminated(dot_command("gate"), space1_escape),
+                        // <name>
+                        signal_name,
+                        space1_escape,
+                    ),
+                    // <formal-actual-list>
+                    terminated(formal_actual, ensure_newline),
+                    success(LibraryTechnology::Gate),
+                )),
+                tuple((
+                    delimited(
+                        // .mlatch
+                        terminated(dot_command("mlatch"), space1_escape),
+                        // <name>
+                        signal_name,
+                        space1_escape,
+                    ),
+                    // <formal-actual>
+                    terminated(formal_actual, space1_escape),
+                    library_latch,
+                )),
+            )),
+            |(name, formal_actual, technology)| LibraryGate {
+                name,
+                formal_actual,
+                technology,
+            },
+        )(input)
     }
 }
 
@@ -235,7 +289,7 @@ impl<'a> ModelField<'a> {
             terminated(
                 pair(
                     terminated(dot_command(name), space1_escape),
-                    separated_list1(space1_escape, node_name),
+                    separated_list1(space1_escape, signal_name),
                 ),
                 ensure_newline,
             )
@@ -267,7 +321,7 @@ impl<'a> Model<'a> {
                     // .model <decl-model-name>
                     delimited(
                         pair(dot_command("model"), space1_escape),
-                        opt(node_name),
+                        opt(signal_name),
                         ensure_newline,
                     ),
                     // .inputs <decl-input-list>
@@ -330,10 +384,10 @@ mod tests {
     );
 
     test_parser!(
-        test_node_name,
-        node_name,
+        test_signal_name,
+        signal_name,
         [
-            ("node_a node_b", "node_a", " node_b"),
+            ("signal_a signal_b", "signal_a", " signal_b"),
             ("a[0] a[1]", "a[0]", " a[1]"),
             ("A.B.C\n", "A.B.C", "\n"),
         ]
@@ -464,6 +518,34 @@ e
                     ty: LatchType::RisingEdge,
                     control: LatchControl::GlobalClock,
                     init: LogicValue::Unknown,
+                },
+                ""
+            )
+        ]
+    );
+
+    test_parser!(
+        test_library_gate,
+        LibraryGate::parse,
+        [
+            (
+                ".gate and2 A=v1 B=v2 O=x",
+                LibraryGate {
+                    name: "and2",
+                    formal_actual: vec![("A", "v1"), ("B", "v2"), ("O", "x")],
+                    technology: LibraryTechnology::Gate
+                },
+                ""
+            ),
+            (
+                ".mlatch jk_rising_edge J=j K=k Q=q clk 1",
+                LibraryGate {
+                    name: "jk_rising_edge",
+                    formal_actual: vec![("J", "j"), ("K", "k"), ("Q", "q")],
+                    technology: LibraryTechnology::Latch(LibraryLatch {
+                        control: LatchControl::Clock("clk"),
+                        init: LogicValue::One
+                    })
                 },
                 ""
             )
