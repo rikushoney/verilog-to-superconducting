@@ -107,14 +107,14 @@ impl<'a> LogicGate<'a> {
     }
 }
 
-impl LatchType {
+impl LatchKind {
     fn parse(input: &str) -> IResult<&str, Self> {
         alt((
-            value(LatchType::FallingEdge, tag("fe")),
-            value(LatchType::RisingEdge, tag("re")),
-            value(LatchType::ActiveHigh, tag("ah")),
-            value(LatchType::ActiveLow, tag("al")),
-            value(LatchType::Asynchronous, tag("as")),
+            value(LatchKind::FallingEdge, tag("fe")),
+            value(LatchKind::RisingEdge, tag("re")),
+            value(LatchKind::ActiveHigh, tag("ah")),
+            value(LatchKind::ActiveLow, tag("al")),
+            value(LatchKind::Asynchronous, tag("as")),
         ))(input)
     }
 }
@@ -151,7 +151,7 @@ impl<'a> GenericLatch<'a> {
                     // output
                     terminated(signal_name, space1_escape),
                     // type
-                    terminated(LatchType::parse, space1_escape),
+                    terminated(LatchKind::parse, space1_escape),
                     // control
                     terminated(LatchControl::parse, opt(space1_escape)),
                     // init-val (default: Unknown)
@@ -159,10 +159,10 @@ impl<'a> GenericLatch<'a> {
                 )),
                 ensure_newline,
             ),
-            |(input, output, ty, control, init)| GenericLatch {
+            |(input, output, kind, control, init)| GenericLatch {
                 input,
                 output,
-                ty,
+                kind,
                 control,
                 init,
             },
@@ -504,7 +504,7 @@ e
                 GenericLatch {
                     input: "a",
                     output: "b",
-                    ty: LatchType::ActiveHigh,
+                    kind: LatchKind::ActiveHigh,
                     control: LatchControl::Clock("clk"),
                     init: LogicValue::One,
                 },
@@ -515,7 +515,7 @@ e
                 GenericLatch {
                     input: "a",
                     output: "b",
-                    ty: LatchType::RisingEdge,
+                    kind: LatchKind::RisingEdge,
                     control: LatchControl::GlobalClock,
                     init: LogicValue::Unknown,
                 },
@@ -649,7 +649,7 @@ e
                     commands: vec![Command::GenericLatch(GenericLatch {
                         input: "a",
                         output: "d",
-                        ty: LatchType::FallingEdge,
+                        kind: LatchKind::FallingEdge,
                         control: LatchControl::Clock("clk1"),
                         init: LogicValue::DontCare
                     })],

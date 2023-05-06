@@ -15,7 +15,7 @@ pub struct LogicGate<'a> {
 }
 
 #[derive(Clone, Debug, PartialEq)]
-pub enum LatchType {
+pub enum LatchKind {
     FallingEdge,
     RisingEdge,
     ActiveHigh,
@@ -42,7 +42,7 @@ pub enum LatchControl<'a> {
 pub struct GenericLatch<'a> {
     pub input: &'a str,
     pub output: &'a str,
-    pub ty: LatchType,
+    pub kind: LatchKind,
     pub control: LatchControl<'a>,
     pub init: LogicValue,
 }
