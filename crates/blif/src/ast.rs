@@ -59,15 +59,20 @@ pub enum LibraryTechnology<'a> {
     Latch(LibraryLatch<'a>),
 }
 
+pub type FormalActual<'a> = Vec<(&'a str, &'a str)>;
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct LibraryGate<'a> {
     pub name: &'a str,
-    pub formal_actual: Vec<(&'a str, &'a str)>,
+    pub formal_actual: FormalActual<'a>,
     pub technology: LibraryTechnology<'a>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
-pub struct ModelReference {}
+pub struct ModelReference<'a> {
+    pub name: &'a str,
+    pub formal_actual: FormalActual<'a>,
+}
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct SubfileReference {}
@@ -86,7 +91,7 @@ pub enum Command<'a> {
     LogicGate(LogicGate<'a>),
     GenericLatch(GenericLatch<'a>),
     LibraryGate(LibraryGate<'a>),
-    ModelReference(ModelReference),
+    ModelReference(ModelReference<'a>),
     SubfileReference(SubfileReference),
     FsmDescription(FsmDescription),
     ClockConstraint(ClockConstraint),

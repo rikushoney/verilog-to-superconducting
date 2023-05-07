@@ -170,15 +170,16 @@ impl<'a> GenericLatch<'a> {
     }
 }
 
+fn formal_actual<'a>(input: &'a str) -> IResult<&'a str, FormalActual<'a>> {
+    // formal1=actual1 formal2=actual2 ...
+    separated_list1(
+        space1_escape,
+        separated_pair(signal_name, char('='), signal_name),
+    )(input)
+}
+
 impl<'a> LibraryGate<'a> {
     fn parse(input: &'a str) -> IResult<&'a str, Self> {
-        // formal1=actual1 formal2=actual2 ...
-        let formal_actual = |input| {
-            separated_list1(
-                space1_escape,
-                separated_pair(signal_name, char('='), signal_name),
-            )(input)
-        };
         // <control> [<init-val>]
         let library_latch = |input| {
             map(
@@ -225,9 +226,27 @@ impl<'a> LibraryGate<'a> {
     }
 }
 
-impl ModelReference {
-    fn parse(input: &str) -> IResult<&str, Self> {
-        unimplemented_command!(input)
+impl<'a> ModelReference<'a> {
+    fn parse(input: &'a str) -> IResult<&'a str, Self> {
+        map(
+            // .subckt <model-name> <formal-actual-list>
+            tuple((
+                // .subckt <model-name>
+                delimited(
+                    // .subckt
+                    terminated(dot_command("subckt"), space1_escape),
+                    // <model-name>
+                    signal_name,
+                    space1_escape,
+                ),
+                // <formal-actual-list>
+                terminated(formal_actual, ensure_newline),
+            )),
+            |(name, formal_actual)| Self {
+                name,
+                formal_actual,
+            },
+        )(input)
     }
 }
 
@@ -553,6 +572,19 @@ e
     );
 
     test_parser!(
+        test_model_reference,
+        ModelReference::parse,
+        [(
+            ".subckt submodel a=v1 b=v2 c=v3",
+            ModelReference {
+                name: "submodel",
+                formal_actual: vec![("a", "v1"), ("b", "v2"), ("c", "v3")]
+            },
+            ""
+        ),]
+    );
+
+    test_parser!(
         test_model,
         Model::parse,
         [
@@ -656,6 +688,88 @@ e
                 },
                 "",
             ),
+            (
+                r#".model 4bitadder
+.inputs A3 A2 A1 A0 B3 B2 B1 B0 CIN
+.outputs COUT S3 S2 S1 S0
+.subckt fulladder a=A0 b=B0 cin=CIN s=S0 cout=CARRY1
+.subckt fulladder a=A3 b=B3 cin=CARRY3 s=S3 cout=COUT
+.subckt fulladder b=B1 a=A1 cin=CARRY1 s=XX cout=CARRY2
+.subckt fulladder a=JJ b=B2 cin=CARRY2 s=S2 cout=CARRY3
+# for the sake of example,
+.names XX S1 # formal output ‘s’ does not fanout to a primary output
+1 1
+.names A2 JJ # formal input ‘a’ does not fanin from a primary input
+1 1
+.end"#,
+                Model {
+                    name: Some("4bitadder"),
+                    inputs: vec!["A3", "A2", "A1", "A0", "B3", "B2", "B1", "B0", "CIN"],
+                    outputs: vec!["COUT", "S3", "S2", "S1", "S0"],
+                    clocks: vec![],
+                    commands: vec![
+                        Command::ModelReference(ModelReference {
+                            name: "fulladder",
+                            formal_actual: vec![
+                                ("a", "A0"),
+                                ("b", "B0"),
+                                ("cin", "CIN"),
+                                ("s", "S0"),
+                                ("cout", "CARRY1")
+                            ]
+                        }),
+                        Command::ModelReference(ModelReference {
+                            name: "fulladder",
+                            formal_actual: vec![
+                                ("a", "A3"),
+                                ("b", "B3"),
+                                ("cin", "CARRY3"),
+                                ("s", "S3"),
+                                ("cout", "COUT")
+                            ]
+                        }),
+                        Command::ModelReference(ModelReference {
+                            name: "fulladder",
+                            formal_actual: vec![
+                                ("b", "B1"),
+                                ("a", "A1"),
+                                ("cin", "CARRY1"),
+                                ("s", "XX"),
+                                ("cout", "CARRY2")
+                            ]
+                        }),
+                        Command::ModelReference(ModelReference {
+                            name: "fulladder",
+                            formal_actual: vec![
+                                ("a", "JJ"),
+                                ("b", "B2"),
+                                ("cin", "CARRY2"),
+                                ("s", "S2"),
+                                ("cout", "CARRY3")
+                            ]
+                        }),
+                        Command::LogicGate(LogicGate {
+                            exdc: false,
+                            inputs: vec!["XX"],
+                            output: "S1",
+                            pla_description: vec![SingleOutput {
+                                inputs: "1",
+                                output: '1'
+                            },]
+                        }),
+                        Command::LogicGate(LogicGate {
+                            exdc: false,
+                            inputs: vec!["A2"],
+                            output: "JJ",
+                            pla_description: vec![SingleOutput {
+                                inputs: "1",
+                                output: '1'
+                            },]
+                        })
+                    ]
+                },
+                ""
+            )
         ]
     );
 }
