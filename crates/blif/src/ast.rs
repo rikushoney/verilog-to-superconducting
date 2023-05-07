@@ -85,7 +85,28 @@ pub struct SubfileReference<'a> {
 pub struct FsmDescription {}
 
 #[derive(Clone, Debug, PartialEq)]
-pub struct ClockConstraint {}
+pub struct BeforeAfter {
+    pub before: f64,
+    pub after: f64,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub enum RiseFall {
+    Rise,
+    Fall,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct ClockEvent<'a> {
+    pub event_percent: f64,
+    pub events: Vec<(RiseFall, &'a str, Option<BeforeAfter>)>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct ClockConstraint<'a> {
+    pub cycle_time: f64,
+    pub clock_events: Vec<ClockEvent<'a>>,
+}
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct DelayConstraint {}
@@ -98,7 +119,7 @@ pub enum Command<'a> {
     ModelReference(ModelReference<'a>),
     SubfileReference(SubfileReference<'a>),
     FsmDescription(FsmDescription),
-    ClockConstraint(ClockConstraint),
+    ClockConstraint(ClockConstraint<'a>),
     DelayConstraint(DelayConstraint),
 }
 

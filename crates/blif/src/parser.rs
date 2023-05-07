@@ -9,6 +9,7 @@ use nom::{
     combinator::{eof, fail, map, map_res, opt, recognize, success, value},
     error::context,
     multi::{many0, many1, many1_count, separated_list1},
+    number::complete::f64,
     sequence::{delimited, pair, preceded, separated_pair, terminated, tuple},
     IResult,
 };
@@ -254,11 +255,10 @@ impl<'a> ModelReference<'a> {
 
 impl<'a> SubfileReference<'a> {
     fn parse(input: &'a str) -> IResult<&'a str, Self> {
-        let filename = |input| map(signal_name, |filename| path::Path::new(filename))(input);
         map(
             delimited(
                 terminated(dot_command("search"), space1_escape),
-                filename,
+                map(signal_name, |filename| path::Path::new(filename)),
                 ensure_newline,
             ),
             |filename| Self { filename },
@@ -272,9 +272,31 @@ impl FsmDescription {
     }
 }
 
-impl ClockConstraint {
-    fn parse(input: &str) -> IResult<&str, Self> {
+impl<'a> ClockConstraint<'a> {
+    fn parse(input: &'a str) -> IResult<&'a str, Self> {
         unimplemented_command!(input)
+        /*
+        map(
+            tuple((
+                delimited(
+                    terminated(dot_command("cycle"), space1_escape),
+                    f64,
+                    ensure_newline,
+                ),
+                many1(delimited(
+                    terminated(dot_command("clock_event"), space1_escape),
+                    tuple((
+                        terminated(f64, space1_escape),
+                        many1(alt((
+                            value(RiseFall::Rise, char('r')),
+                            value(RiseFall::Fall, char('f')),
+                        ))),
+                    )),
+                )),
+            )),
+            |_| {},
+        )(input)
+        */
     }
 }
 
