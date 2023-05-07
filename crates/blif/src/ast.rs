@@ -1,5 +1,7 @@
 #![allow(dead_code)]
 
+use std::path;
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct SingleOutput<'a> {
     pub inputs: &'a str,
@@ -75,7 +77,9 @@ pub struct ModelReference<'a> {
 }
 
 #[derive(Clone, Debug, PartialEq)]
-pub struct SubfileReference {}
+pub struct SubfileReference<'a> {
+    pub filename: &'a path::Path,
+}
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct FsmDescription {}
@@ -92,7 +96,7 @@ pub enum Command<'a> {
     GenericLatch(GenericLatch<'a>),
     LibraryGate(LibraryGate<'a>),
     ModelReference(ModelReference<'a>),
-    SubfileReference(SubfileReference),
+    SubfileReference(SubfileReference<'a>),
     FsmDescription(FsmDescription),
     ClockConstraint(ClockConstraint),
     DelayConstraint(DelayConstraint),

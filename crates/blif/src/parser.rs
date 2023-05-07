@@ -13,6 +13,8 @@ use nom::{
     IResult,
 };
 
+use std::path;
+
 fn signal_name(input: &str) -> IResult<&str, &str> {
     // signal names can be anything except whitespace, '#' or '='
     recognize(many1_count(satisfy(|ch| {
@@ -250,9 +252,17 @@ impl<'a> ModelReference<'a> {
     }
 }
 
-impl SubfileReference {
-    fn parse(input: &str) -> IResult<&str, Self> {
-        unimplemented_command!(input)
+impl<'a> SubfileReference<'a> {
+    fn parse(input: &'a str) -> IResult<&'a str, Self> {
+        let filename = |input| map(signal_name, |filename| path::Path::new(filename))(input);
+        map(
+            delimited(
+                terminated(dot_command("search"), space1_escape),
+                filename,
+                ensure_newline,
+            ),
+            |filename| Self { filename },
+        )(input)
     }
 }
 
@@ -582,6 +592,18 @@ e
             },
             ""
         ),]
+    );
+
+    test_parser!(
+        test_subfile_reference,
+        SubfileReference::parse,
+        [(
+            ".search myFunkyFile.blif",
+            SubfileReference {
+                filename: path::Path::new("myFunkyFile.blif")
+            },
+            ""
+        )]
     );
 
     test_parser!(
