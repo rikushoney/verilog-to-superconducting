@@ -7,7 +7,7 @@ use nom::{
     bytes::complete::tag,
     character::complete::{char, line_ending, not_line_ending, one_of, satisfy},
     combinator::{fail, map, opt, recognize, success, value},
-    error::context,
+    error::{context, ContextError, ParseError},
     multi::{many0_count, many1, many1_count, separated_list1},
     number::complete::double,
     sequence::{delimited, pair, preceded, separated_pair, terminated, tuple},
@@ -17,52 +17,56 @@ use nom::{
 use std::path;
 
 // Ident ::= ([^#=] - S)+
-fn ident(input: &str) -> IResult<&str, &str> {
+fn ident<'a, E: ParseError<&'a str>>(input: &'a str) -> IResult<&'a str, &'a str, E> {
     // identifiers can be anything except whitespace, '#' or '='
     recognize(many1_count(satisfy(|ch| {
         !ch.is_whitespace() && "#=".chars().all(|illegal| ch != illegal)
     })))(input)
 }
 
-fn dot_command<'a>(command: &'static str) -> impl FnMut(&'a str) -> IResult<&'a str, &'a str> {
+fn dot_command<'a, E: ParseError<&'a str>>(
+    command: &'static str,
+) -> impl FnMut(&'a str) -> IResult<&'a str, &'a str, E> {
     // .<command>
     preceded(char('.'), tag(command))
 }
 
 // Comment ::= '#' [^\n]* \n
-fn comment(input: &str) -> IResult<&str, &str> {
+fn comment<'a, E: ParseError<&'a str>>(input: &'a str) -> IResult<&'a str, &'a str, E> {
     // # ...
     delimited(char('#'), not_line_ending, line_ending)(input)
 }
 
 // EOL ::= S* (S* (\n | Comment) S*)+
-fn end_of_line(input: &str) -> IResult<&str, &str> {
+fn end_of_line<'a, E: ParseError<&'a str>>(input: &'a str) -> IResult<&'a str, &'a str, E> {
     recognize(tuple((
         many_space,
         many1_count(tuple((many_space, alt((line_ending, comment)), many_space))),
     )))(input)
 }
 
-fn space(input: &str) -> IResult<&str, &str> {
+fn space<'a, E: ParseError<&'a str>>(input: &'a str) -> IResult<&'a str, &'a str, E> {
     alt((recognize(one_of(" \t")), tag("\\\n")))(input)
 }
 
-fn many_space(input: &str) -> IResult<&str, &str> {
+fn many_space<'a, E: ParseError<&'a str>>(input: &'a str) -> IResult<&'a str, &'a str, E> {
     recognize(many0_count(space))(input)
 }
 
-fn some_space(input: &str) -> IResult<&str, &str> {
+fn some_space<'a, E: ParseError<&'a str>>(input: &'a str) -> IResult<&'a str, &'a str, E> {
     recognize(many1_count(space))(input)
 }
 
 macro_rules! unimplemented_command {
     ($input:expr) => {{
-        context("unimplemented_command", fail)($input)
+        context("unimplemented command", fail)($input)
     }};
 }
 
 impl<'a> SingleOutput<'a> {
-    fn parse(input: &'a str) -> IResult<&'a str, Self> {
+    fn parse<E: ParseError<&'a str> + ContextError<&'a str>>(
+        input: &'a str,
+    ) -> IResult<&'a str, Self, E> {
         let input_plane = alt((char('0'), char('1'), char('-')));
         let output_plane = alt((char('0'), char('1')));
         map(
@@ -77,13 +81,17 @@ impl<'a> SingleOutput<'a> {
 }
 
 // SingleOutputCover ::= InputPlane+ OutputPlane (EOL InputPlane+ OutputPlane)*
-fn single_output_cover(input: &str) -> IResult<&str, Vec<SingleOutput>> {
+fn single_output_cover<'a, E: ParseError<&'a str> + ContextError<&'a str>>(
+    input: &'a str,
+) -> IResult<&'a str, Vec<SingleOutput>, E> {
     separated_list1(end_of_line, SingleOutput::parse)(input)
 }
 
 // LogicGate ::= (".exdc" EOL)? ".names" S+ SignalList EOL SingleOutputCover
 impl<'a> LogicGate<'a> {
-    fn parse(input: &'a str) -> IResult<&'a str, Self> {
+    fn parse<E: ParseError<&'a str> + ContextError<&'a str>>(
+        input: &'a str,
+    ) -> IResult<&'a str, Self, E> {
         map(
             tuple((
                 map(opt(terminated(dot_command("exdc"), end_of_line)), |exdc| {
@@ -111,8 +119,9 @@ impl<'a> LogicGate<'a> {
     }
 }
 
-impl LatchKind {
-    fn parse(input: &str) -> IResult<&str, Self> {
+// LatchKind ::= "fe" | "re" | "ah" | "al" | "as"
+impl<'a> LatchKind {
+    fn parse<E: ParseError<&'a str>>(input: &'a str) -> IResult<&'a str, Self, E> {
         alt((
             value(LatchKind::FallingEdge, tag("fe")),
             value(LatchKind::RisingEdge, tag("re")),
@@ -123,8 +132,9 @@ impl LatchKind {
     }
 }
 
-impl LogicValue {
-    fn parse(input: &str) -> IResult<&str, Self> {
+// LogicValue ::= [0-3] | DontCare
+impl<'a> LogicValue {
+    fn parse<E: ParseError<&'a str>>(input: &'a str) -> IResult<&'a str, Self, E> {
         alt((
             value(LogicValue::Zero, char('0')),
             value(LogicValue::One, char('1')),
@@ -134,8 +144,9 @@ impl LogicValue {
     }
 }
 
+// LatchControl ::= Ident | "NIL"
 impl<'a> LatchControl<'a> {
-    fn parse(input: &'a str) -> IResult<&'a str, Self> {
+    fn parse<E: ParseError<&'a str>>(input: &'a str) -> IResult<&'a str, Self, E> {
         map(ident, |control| match control {
             "NIL" => LatchControl::GlobalClock,
             clock => LatchControl::Clock(clock),
@@ -145,7 +156,7 @@ impl<'a> LatchControl<'a> {
 
 // GenericLatch ::= ".latch" S+ Ident S+ Ident S+ LatchKind S+ LatchControl (S+ LogicValue)?
 impl<'a> GenericLatch<'a> {
-    fn parse(input: &'a str) -> IResult<&'a str, Self> {
+    fn parse<E: ParseError<&'a str>>(input: &'a str) -> IResult<&'a str, Self, E> {
         map(
             preceded(
                 terminated(dot_command("latch"), some_space),
@@ -172,12 +183,14 @@ impl<'a> GenericLatch<'a> {
 }
 
 // FormalActualList ::= Ident "=" Ident (S+ Ident "=" Ident)*
-fn formal_actual_list<'a>(input: &'a str) -> IResult<&'a str, FormalActual<'a>> {
+fn formal_actual_list<'a, E: ParseError<&'a str>>(
+    input: &'a str,
+) -> IResult<&'a str, FormalActual<'a>, E> {
     separated_list1(some_space, separated_pair(ident, char('='), ident))(input)
 }
 
 // GateTechnology ::= ".gate" S+ Ident S+ FormalActualList
-fn gate_technology(input: &str) -> IResult<&str, LibraryGate> {
+fn gate_technology<'a, E: ParseError<&'a str>>(input: &'a str) -> IResult<&'a str, LibraryGate, E> {
     map(
         preceded(
             terminated(dot_command("gate"), some_space),
@@ -192,7 +205,9 @@ fn gate_technology(input: &str) -> IResult<&str, LibraryGate> {
 }
 
 // LatchTechnology ::= ".mlatch" S+ Ident S+ FormalActualList S+ LatchControl (S+ LogicValue)?
-fn latch_technology(input: &str) -> IResult<&str, LibraryGate> {
+fn latch_technology<'a, E: ParseError<&'a str>>(
+    input: &'a str,
+) -> IResult<&'a str, LibraryGate, E> {
     map(
         preceded(
             terminated(dot_command("mlatch"), some_space),
@@ -216,14 +231,14 @@ fn latch_technology(input: &str) -> IResult<&str, LibraryGate> {
 
 // LibraryGate ::= GateTechnology | LatchTechnology
 impl<'a> LibraryGate<'a> {
-    fn parse(input: &'a str) -> IResult<&'a str, Self> {
+    fn parse<E: ParseError<&'a str>>(input: &'a str) -> IResult<&'a str, Self, E> {
         alt((gate_technology, latch_technology))(input)
     }
 }
 
 // ModelReference ::= ".subckt" S+ Ident S+ FormalActualList
 impl<'a> ModelReference<'a> {
-    fn parse(input: &'a str) -> IResult<&'a str, Self> {
+    fn parse<E: ParseError<&'a str>>(input: &'a str) -> IResult<&'a str, Self, E> {
         map(
             preceded(
                 terminated(dot_command("subckt"), some_space),
@@ -239,25 +254,27 @@ impl<'a> ModelReference<'a> {
 
 // SubfileReference ::= ".search" S+ Ident
 impl<'a> SubfileReference<'a> {
-    fn parse(input: &'a str) -> IResult<&'a str, Self> {
+    fn parse<E: ParseError<&'a str>>(input: &'a str) -> IResult<&'a str, Self, E> {
         map(
             preceded(
                 terminated(dot_command("search"), some_space),
-                map(ident, |filename| path::Path::new(filename)),
+                map(ident, path::Path::new),
             ),
             |filename| Self { filename },
         )(input)
     }
 }
 
-impl FsmDescription {
-    fn parse(input: &str) -> IResult<&str, Self> {
+impl<'a> FsmDescription {
+    fn parse<E: ParseError<&'a str> + ContextError<&'a str>>(
+        input: &'a str,
+    ) -> IResult<&'a str, Self, E> {
         unimplemented_command!(input)
     }
 }
 
 impl<'a> ClockEvent<'a> {
-    fn parse(input: &'a str) -> IResult<&'a str, Self> {
+    fn parse<E: ParseError<&'a str>>(input: &'a str) -> IResult<&'a str, Self, E> {
         // .clock_event <event-percent> <event-1> [<event-2> ... <event-n>]
         map(
             tuple((
@@ -302,7 +319,7 @@ impl<'a> ClockEvent<'a> {
 }
 
 impl<'a> ClockConstraint<'a> {
-    fn parse(input: &'a str) -> IResult<&'a str, Self> {
+    fn parse<E: ParseError<&'a str>>(input: &'a str) -> IResult<&'a str, Self, E> {
         map(
             tuple((
                 // .cycle <cycle-time>
@@ -322,8 +339,10 @@ impl<'a> ClockConstraint<'a> {
     }
 }
 
-impl DelayConstraint {
-    fn parse(input: &str) -> IResult<&str, Self> {
+impl<'a> DelayConstraint {
+    fn parse<E: ParseError<&'a str> + ContextError<&'a str>>(
+        input: &'a str,
+    ) -> IResult<&'a str, Self, E> {
         unimplemented_command!(input)
     }
 }
@@ -335,7 +354,9 @@ macro_rules! command_parser {
 }
 
 impl<'a> Command<'a> {
-    fn parse(input: &'a str) -> IResult<&'a str, Self> {
+    fn parse<E: ParseError<&'a str> + ContextError<&'a str>>(
+        input: &'a str,
+    ) -> IResult<&'a str, Self, E> {
         alt((
             command_parser!(logic_gate => LogicGate),
             command_parser!(generic_latch => GenericLatch),
@@ -357,7 +378,7 @@ enum ModelField<'a> {
 }
 
 // SignalList ::= Ident (S+ Ident)*
-fn signal_list(input: &str) -> IResult<&str, Vec<&str>> {
+fn signal_list<'a, E: ParseError<&'a str>>(input: &'a str) -> IResult<&'a str, Vec<&'a str>, E> {
     separated_list1(some_space, ident)(input)
 }
 
@@ -366,7 +387,7 @@ fn signal_list(input: &str) -> IResult<&str, Vec<&str>> {
 // OutputsList ::= ".outputs" S+ SignalList
 // ClockList   ::= ".clock" S+ SignalList
 impl<'a> ModelField<'a> {
-    fn parse(input: &'a str) -> IResult<&'a str, Self> {
+    fn parse<E: ParseError<&'a str>>(input: &'a str) -> IResult<&'a str, Self, E> {
         map(
             alt((
                 pair(terminated(dot_command("inputs"), some_space), signal_list),
@@ -377,7 +398,6 @@ impl<'a> ModelField<'a> {
                 "inputs" => ModelField::Inputs(items),
                 "outputs" => ModelField::Outputs(items),
                 "clock" => ModelField::Clock(items),
-                // TODO: proper error handling
                 _ => panic!("unsupported model field"),
             },
         )(input)
@@ -385,18 +405,24 @@ impl<'a> ModelField<'a> {
 }
 
 // ModelFields ::= ModelField (EOL ModelField)*
-fn model_fields(input: &str) -> IResult<&str, Vec<ModelField>> {
+fn model_fields<'a, E: ParseError<&'a str>>(
+    input: &'a str,
+) -> IResult<&'a str, Vec<ModelField>, E> {
     separated_list1(end_of_line, ModelField::parse)(input)
 }
 
 // Commands ::= Command (EOL Command)*
-fn commands(input: &str) -> IResult<&str, Vec<Command>> {
+fn commands<'a, E: ParseError<&'a str> + ContextError<&'a str>>(
+    input: &'a str,
+) -> IResult<&'a str, Vec<Command>, E> {
     separated_list1(end_of_line, Command::parse)(input)
 }
 
 // Model ::= ".model" S+ Ident EOL ModelFields EOL Commands (EOL ".end")?
 impl<'a> Model<'a> {
-    fn parse(input: &'a str) -> IResult<&str, Self> {
+    fn parse<E: ParseError<&'a str> + ContextError<&'a str>>(
+        input: &'a str,
+    ) -> IResult<&str, Self, E> {
         map(
             delimited(
                 terminated(dot_command("model"), some_space),
@@ -434,13 +460,27 @@ impl<'a> Model<'a> {
 mod tests {
     use super::*;
 
+    use nom::{
+        error::{convert_error, VerboseError},
+        Finish,
+    };
+
     macro_rules! test_parser {
         ($test_name:ident, $test_fn:expr, $test_cases:expr) => {
             #[test]
             fn $test_name() {
                 let tests = $test_cases;
                 for (input, expected, rest) in tests {
-                    assert_eq!($test_fn(input), Ok((rest, expected)));
+                    let result: IResult<_, _, VerboseError<&str>> = $test_fn(input);
+                    if let Ok((remaining, actual)) = result {
+                        assert_eq!(actual, expected);
+                        assert_eq!(remaining, rest);
+                    } else {
+                        panic!(
+                            "parser failed with errors:\n{}",
+                            convert_error(input, result.finish().err().unwrap())
+                        );
+                    }
                 }
             }
         };
