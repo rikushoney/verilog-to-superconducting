@@ -5,10 +5,10 @@ use crate::ast::*;
 use nom::{
     branch::alt,
     bytes::complete::tag,
-    character::complete::{char, line_ending, not_line_ending, one_of, satisfy, space0, space1},
-    combinator::{eof, fail, map, map_res, opt, recognize, success, value},
+    character::complete::{char, line_ending, not_line_ending, one_of, satisfy},
+    combinator::{fail, map, opt, recognize, success, value},
     error::context,
-    multi::{many0, many1, many1_count, separated_list1},
+    multi::{many0_count, many1, many1_count, separated_list1},
     number::complete::double,
     sequence::{delimited, pair, preceded, separated_pair, terminated, tuple},
     IResult,
@@ -16,10 +16,11 @@ use nom::{
 
 use std::path;
 
-fn signal_name(input: &str) -> IResult<&str, &str> {
-    // signal names can be anything except whitespace, '#' or '='
+// Ident ::= ([^#=] - S)+
+fn ident(input: &str) -> IResult<&str, &str> {
+    // identifiers can be anything except whitespace, '#' or '='
     recognize(many1_count(satisfy(|ch| {
-        !ch.is_whitespace() && "#=".chars().all(|invalid| ch != invalid)
+        !ch.is_whitespace() && "#=".chars().all(|illegal| ch != illegal)
     })))(input)
 }
 
@@ -28,30 +29,30 @@ fn dot_command<'a>(command: &'static str) -> impl FnMut(&'a str) -> IResult<&'a 
     preceded(char('.'), tag(command))
 }
 
+// Comment ::= '#' [^\n]* \n
 fn comment(input: &str) -> IResult<&str, &str> {
     // # ...
     delimited(char('#'), not_line_ending, line_ending)(input)
 }
 
-fn ensure_newline(input: &str) -> IResult<&str, &str> {
-    preceded(
-        space0,
-        alt((
-            // skip whitespace and comments and ensure that there is at least a single newline
-            recognize(many1_count(delimited(
-                space0,
-                recognize(alt((line_ending, comment))),
-                space0,
-            ))),
-            // treat end-of-file as newline in case a newline is missing
-            eof,
-        )),
-    )(input)
+// EOL ::= S* (S* (\n | Comment) S*)+
+fn end_of_line(input: &str) -> IResult<&str, &str> {
+    recognize(tuple((
+        many_space,
+        many1_count(tuple((many_space, alt((line_ending, comment)), many_space))),
+    )))(input)
 }
 
-fn space1_escape(input: &str) -> IResult<&str, &str> {
-    // treat '\' at the end of line as regular whitespace
-    recognize(many1_count(alt((tag("\\\n"), space1))))(input)
+fn space(input: &str) -> IResult<&str, &str> {
+    alt((recognize(one_of(" \t")), tag("\\\n")))(input)
+}
+
+fn many_space(input: &str) -> IResult<&str, &str> {
+    recognize(many0_count(space))(input)
+}
+
+fn some_space(input: &str) -> IResult<&str, &str> {
+    recognize(many1_count(space))(input)
 }
 
 macro_rules! unimplemented_command {
@@ -62,38 +63,38 @@ macro_rules! unimplemented_command {
 
 impl<'a> SingleOutput<'a> {
     fn parse(input: &'a str) -> IResult<&'a str, Self> {
-        // {0, 1, -}
         let input_plane = alt((char('0'), char('1'), char('-')));
-        // {0, 1}
         let output_plane = alt((char('0'), char('1')));
         map(
-            // <input-plane> <output-plane>
-            tuple((
-                terminated(recognize(many1_count(input_plane)), space1_escape),
+            separated_pair(
+                recognize(many1_count(input_plane)),
+                some_space,
                 output_plane,
-            )),
+            ),
             |(inputs, output)| Self { inputs, output },
         )(input)
     }
 }
 
+// SingleOutputCover ::= InputPlane+ OutputPlane (EOL InputPlane+ OutputPlane)*
+fn single_output_cover(input: &str) -> IResult<&str, Vec<SingleOutput>> {
+    separated_list1(end_of_line, SingleOutput::parse)(input)
+}
+
+// LogicGate ::= (".exdc" EOL)? ".names" S+ SignalList EOL SingleOutputCover
 impl<'a> LogicGate<'a> {
     fn parse(input: &'a str) -> IResult<&'a str, Self> {
         map(
             tuple((
-                // .exdc
-                map(
-                    opt(terminated(dot_command("exdc"), ensure_newline)),
-                    |exdc| exdc.is_some(),
-                ),
-                // .names <in-1> <in-2> ... <in-n> <output>
+                map(opt(terminated(dot_command("exdc"), end_of_line)), |exdc| {
+                    exdc.is_some()
+                }),
                 delimited(
-                    pair(dot_command("names"), space1_escape),
-                    separated_list1(space1_escape, signal_name),
-                    ensure_newline,
+                    terminated(dot_command("names"), some_space),
+                    signal_list,
+                    end_of_line,
                 ),
-                // <single-output-cover>
-                many1(terminated(SingleOutput::parse, ensure_newline)),
+                single_output_cover,
             )),
             |(exdc, mut inputs, pla_description)| {
                 // it is guaranteed that `inputs` contains at least a single element due to
@@ -135,32 +136,29 @@ impl LogicValue {
 
 impl<'a> LatchControl<'a> {
     fn parse(input: &'a str) -> IResult<&'a str, Self> {
-        map(signal_name, |control| match control {
+        map(ident, |control| match control {
             "NIL" => LatchControl::GlobalClock,
             clock => LatchControl::Clock(clock),
         })(input)
     }
 }
 
+// GenericLatch ::= ".latch" S+ Ident S+ Ident S+ LatchKind S+ LatchControl (S+ LogicValue)?
 impl<'a> GenericLatch<'a> {
     fn parse(input: &'a str) -> IResult<&'a str, Self> {
         map(
-            delimited(
-                // .latch
-                terminated(dot_command("latch"), space1_escape),
+            preceded(
+                terminated(dot_command("latch"), some_space),
                 tuple((
-                    // input
-                    terminated(signal_name, space1_escape),
-                    // output
-                    terminated(signal_name, space1_escape),
-                    // type
-                    terminated(LatchKind::parse, space1_escape),
-                    // control
-                    terminated(LatchControl::parse, opt(space1_escape)),
-                    // init-val (default: Unknown)
-                    alt((LogicValue::parse, success(LogicValue::default()))),
+                    terminated(ident, some_space),
+                    terminated(ident, some_space),
+                    terminated(LatchKind::parse, some_space),
+                    LatchControl::parse,
+                    alt((
+                        preceded(some_space, LogicValue::parse),
+                        success(LogicValue::default()),
+                    )),
                 )),
-                ensure_newline,
             ),
             |(input, output, kind, control, init)| GenericLatch {
                 input,
@@ -173,80 +171,64 @@ impl<'a> GenericLatch<'a> {
     }
 }
 
-fn formal_actual<'a>(input: &'a str) -> IResult<&'a str, FormalActual<'a>> {
-    // formal1=actual1 formal2=actual2 ...
-    separated_list1(
-        space1_escape,
-        separated_pair(signal_name, char('='), signal_name),
+// FormalActualList ::= Ident "=" Ident (S+ Ident "=" Ident)*
+fn formal_actual_list<'a>(input: &'a str) -> IResult<&'a str, FormalActual<'a>> {
+    separated_list1(some_space, separated_pair(ident, char('='), ident))(input)
+}
+
+// GateTechnology ::= ".gate" S+ Ident S+ FormalActualList
+fn gate_technology(input: &str) -> IResult<&str, LibraryGate> {
+    map(
+        preceded(
+            terminated(dot_command("gate"), some_space),
+            pair(terminated(ident, some_space), formal_actual_list),
+        ),
+        |(name, formal_actual)| LibraryGate {
+            name,
+            formal_actual,
+            technology: LibraryTechnology::Gate,
+        },
     )(input)
 }
 
+// LatchTechnology ::= ".mlatch" S+ Ident S+ FormalActualList S+ LatchControl (S+ LogicValue)?
+fn latch_technology(input: &str) -> IResult<&str, LibraryGate> {
+    map(
+        preceded(
+            terminated(dot_command("mlatch"), some_space),
+            tuple((
+                terminated(ident, some_space),
+                terminated(formal_actual_list, some_space),
+                LatchControl::parse,
+                opt(preceded(some_space, LogicValue::parse)),
+            )),
+        ),
+        |(name, formal_actual, control, init)| LibraryGate {
+            name,
+            formal_actual,
+            technology: LibraryTechnology::Latch(LibraryLatch {
+                control,
+                init: init.unwrap_or(LogicValue::default()),
+            }),
+        },
+    )(input)
+}
+
+// LibraryGate ::= GateTechnology | LatchTechnology
 impl<'a> LibraryGate<'a> {
     fn parse(input: &'a str) -> IResult<&'a str, Self> {
-        map(
-            alt((
-                // .gate <name> <formal-actual-list>
-                tuple((
-                    delimited(
-                        // .gate
-                        terminated(dot_command("gate"), space1_escape),
-                        // <name>
-                        signal_name,
-                        space1_escape,
-                    ),
-                    // <formal-actual-list>
-                    terminated(formal_actual, ensure_newline),
-                    success(LibraryTechnology::Gate),
-                )),
-                // .mlatch <name> <formal-actual-list> <control> [<init-val>]
-                tuple((
-                    delimited(
-                        // .mlatch
-                        terminated(dot_command("mlatch"), space1_escape),
-                        // <name>
-                        signal_name,
-                        space1_escape,
-                    ),
-                    // <formal-actual>
-                    terminated(formal_actual, space1_escape),
-                    // <control> [<init-val>]
-                    map(
-                        terminated(
-                            tuple((
-                                terminated(LatchControl::parse, opt(space1_escape)),
-                                alt((LogicValue::parse, success(LogicValue::default()))),
-                            )),
-                            ensure_newline,
-                        ),
-                        |(control, init)| LibraryTechnology::Latch(LibraryLatch { control, init }),
-                    ),
-                )),
-            )),
-            |(name, formal_actual, technology)| LibraryGate {
-                name,
-                formal_actual,
-                technology,
-            },
-        )(input)
+        alt((gate_technology, latch_technology))(input)
     }
 }
 
+// ModelReference ::= ".subckt" S+ Ident S+ FormalActualList
 impl<'a> ModelReference<'a> {
     fn parse(input: &'a str) -> IResult<&'a str, Self> {
         map(
-            // .subckt <model-name> <formal-actual-list>
-            tuple((
-                // .subckt <model-name>
-                delimited(
-                    // .subckt
-                    terminated(dot_command("subckt"), space1_escape),
-                    // <model-name>
-                    signal_name,
-                    space1_escape,
-                ),
-                // <formal-actual-list>
-                terminated(formal_actual, ensure_newline),
-            )),
+            preceded(
+                terminated(dot_command("subckt"), some_space),
+                pair(terminated(ident, some_space), formal_actual_list),
+            ),
             |(name, formal_actual)| Self {
                 name,
                 formal_actual,
@@ -255,13 +237,13 @@ impl<'a> ModelReference<'a> {
     }
 }
 
+// SubfileReference ::= ".search" S+ Ident
 impl<'a> SubfileReference<'a> {
     fn parse(input: &'a str) -> IResult<&'a str, Self> {
         map(
-            delimited(
-                terminated(dot_command("search"), space1_escape),
-                map(signal_name, |filename| path::Path::new(filename)),
-                ensure_newline,
+            preceded(
+                terminated(dot_command("search"), some_space),
+                map(ident, |filename| path::Path::new(filename)),
             ),
             |filename| Self { filename },
         )(input)
@@ -281,15 +263,15 @@ impl<'a> ClockEvent<'a> {
             tuple((
                 delimited(
                     // .clock_event
-                    terminated(dot_command("clock_event"), space1_escape),
+                    terminated(dot_command("clock_event"), some_space),
                     // <event-percent>
                     double,
-                    space1_escape,
+                    some_space,
                 ),
                 // <event-1> [<event-2> ... <event-n>]
                 terminated(
                     separated_list1(
-                        space1_escape,
+                        some_space,
                         tuple((
                             terminated(
                                 alt((
@@ -298,17 +280,17 @@ impl<'a> ClockEvent<'a> {
                                 )),
                                 char('\''),
                             ),
-                            signal_name,
+                            ident,
                             opt(preceded(
-                                space1_escape,
+                                some_space,
                                 map(
-                                    separated_pair(double, space1_escape, double),
+                                    separated_pair(double, some_space, double),
                                     |(before, after)| BeforeAfter { before, after },
                                 ),
                             )),
                         )),
                     ),
-                    ensure_newline,
+                    end_of_line,
                 ),
             )),
             |(event_percent, events)| Self {
@@ -325,11 +307,12 @@ impl<'a> ClockConstraint<'a> {
             tuple((
                 // .cycle <cycle-time>
                 delimited(
-                    terminated(dot_command("cycle"), space1_escape),
+                    terminated(dot_command("cycle"), some_space),
                     double,
-                    ensure_newline,
+                    end_of_line,
                 ),
-                many1(terminated(ClockEvent::parse, ensure_newline)),
+                // .clock_event <event-percent> <event-1> [<event-2> ... <event-n>]
+                many1(terminated(ClockEvent::parse, end_of_line)),
             )),
             |(cycle_time, clock_events)| Self {
                 cycle_time,
@@ -373,60 +356,56 @@ enum ModelField<'a> {
     Clock(Vec<&'a str>),
 }
 
+// SignalList ::= Ident (S+ Ident)*
+fn signal_list(input: &str) -> IResult<&str, Vec<&str>> {
+    separated_list1(some_space, ident)(input)
+}
+
+// ModelField  ::= (InputsList | OutputsList | ClockList)
+// InputsList  ::= ".inputs" S+ SignalList
+// OutputsList ::= ".outputs" S+ SignalList
+// ClockList   ::= ".clock" S+ SignalList
 impl<'a> ModelField<'a> {
     fn parse(input: &'a str) -> IResult<&'a str, Self> {
-        let field_decl = |name| {
-            terminated(
-                pair(
-                    terminated(dot_command(name), space1_escape),
-                    separated_list1(space1_escape, signal_name),
-                ),
-                ensure_newline,
-            )
-        };
-        map_res(
+        map(
             alt((
-                // .inputs <decl-input-list>
-                field_decl("inputs"),
-                // .outputs <decl-output-list>
-                field_decl("outputs"),
-                // .clock <decl-clock-list>
-                field_decl("clock"),
+                pair(terminated(dot_command("inputs"), some_space), signal_list),
+                pair(terminated(dot_command("outputs"), some_space), signal_list),
+                pair(terminated(dot_command("clock"), some_space), signal_list),
             )),
             |(name, items)| match name {
-                "inputs" => Ok(ModelField::Inputs(items)),
-                "outputs" => Ok(ModelField::Outputs(items)),
-                "clock" => Ok(ModelField::Clock(items)),
-                _ => Err(format!("unexpected declaration \"{}\"", name)),
+                "inputs" => ModelField::Inputs(items),
+                "outputs" => ModelField::Outputs(items),
+                "clock" => ModelField::Clock(items),
+                // TODO: proper error handling
+                _ => panic!("unsupported model field"),
             },
         )(input)
     }
 }
 
+// ModelFields ::= ModelField (EOL ModelField)*
+fn model_fields(input: &str) -> IResult<&str, Vec<ModelField>> {
+    separated_list1(end_of_line, ModelField::parse)(input)
+}
+
+// Commands ::= Command (EOL Command)*
+fn commands(input: &str) -> IResult<&str, Vec<Command>> {
+    separated_list1(end_of_line, Command::parse)(input)
+}
+
+// Model ::= ".model" S+ Ident EOL ModelFields EOL Commands (EOL ".end")?
 impl<'a> Model<'a> {
     fn parse(input: &'a str) -> IResult<&str, Self> {
         map(
-            terminated(
+            delimited(
+                terminated(dot_command("model"), some_space),
                 tuple((
-                    // .model <decl-model-name>
-                    delimited(
-                        pair(dot_command("model"), space1_escape),
-                        opt(signal_name),
-                        ensure_newline,
-                    ),
-                    // .inputs <decl-input-list>
-                    // .outputs <decl-outputs-list>
-                    // .clock <decl-clock-list>
-                    many0(ModelField::parse),
-                    // <command>
-                    //     .
-                    //     .
-                    //     .
-                    // <command>
-                    many1(Command::parse),
+                    opt(terminated(ident, end_of_line)),
+                    terminated(model_fields, end_of_line),
+                    commands,
                 )),
-                // .end
-                opt(dot_command("end")),
+                opt(pair(end_of_line, dot_command("end"))),
             ),
             |(name, fields, commands)| {
                 let mut inputs = Vec::new();
@@ -468,14 +447,14 @@ mod tests {
     }
 
     test_parser!(
-        test_space1_escape,
-        space1_escape,
+        test_some_space,
+        some_space,
         [("\t   \t\\\naaa", "\t   \t\\\n", "aaa")]
     );
 
     test_parser!(
-        test_signal_name,
-        signal_name,
+        test_ident,
+        ident,
         [
             ("signal_a signal_b", "signal_a", " signal_b"),
             ("a[0] a[1]", "a[0]", " a[1]"),
@@ -551,7 +530,7 @@ mod tests {
                         },
                     ],
                 },
-                "",
+                "\n",
             ),
             (
                 r#".exdc
@@ -580,7 +559,7 @@ e
                         },
                     ],
                 },
-                "",
+                "\n",
             ),
         ]
     );
@@ -598,7 +577,7 @@ e
                     control: LatchControl::Clock("clk"),
                     init: LogicValue::One,
                 },
-                ""
+                " "
             ),
             (
                 ".latch a b re NIL",
