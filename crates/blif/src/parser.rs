@@ -9,7 +9,7 @@ use nom::{
     combinator::{eof, fail, map, map_res, opt, recognize, success, value},
     error::context,
     multi::{many0, many1, many1_count, separated_list1},
-    number::complete::f64,
+    number::complete::double,
     sequence::{delimited, pair, preceded, separated_pair, terminated, tuple},
     IResult,
 };
@@ -70,7 +70,7 @@ impl<'a> SingleOutput<'a> {
             // <input-plane> <output-plane>
             tuple((
                 terminated(recognize(many1_count(input_plane)), space1_escape),
-                terminated(output_plane, ensure_newline),
+                output_plane,
             )),
             |(inputs, output)| Self { inputs, output },
         )(input)
@@ -93,7 +93,7 @@ impl<'a> LogicGate<'a> {
                     ensure_newline,
                 ),
                 // <single-output-cover>
-                many1(SingleOutput::parse),
+                many1(terminated(SingleOutput::parse, ensure_newline)),
             )),
             |(exdc, mut inputs, pla_description)| {
                 // it is guaranteed that `inputs` contains at least a single element due to
@@ -183,18 +183,9 @@ fn formal_actual<'a>(input: &'a str) -> IResult<&'a str, FormalActual<'a>> {
 
 impl<'a> LibraryGate<'a> {
     fn parse(input: &'a str) -> IResult<&'a str, Self> {
-        // <control> [<init-val>]
-        let library_latch = |input| {
-            map(
-                tuple((
-                    terminated(LatchControl::parse, opt(space1_escape)),
-                    alt((LogicValue::parse, success(LogicValue::default()))),
-                )),
-                |(control, init)| LibraryTechnology::Latch(LibraryLatch { control, init }),
-            )(input)
-        };
         map(
             alt((
+                // .gate <name> <formal-actual-list>
                 tuple((
                     delimited(
                         // .gate
@@ -207,6 +198,7 @@ impl<'a> LibraryGate<'a> {
                     terminated(formal_actual, ensure_newline),
                     success(LibraryTechnology::Gate),
                 )),
+                // .mlatch <name> <formal-actual-list> <control> [<init-val>]
                 tuple((
                     delimited(
                         // .mlatch
@@ -217,7 +209,17 @@ impl<'a> LibraryGate<'a> {
                     ),
                     // <formal-actual>
                     terminated(formal_actual, space1_escape),
-                    library_latch,
+                    // <control> [<init-val>]
+                    map(
+                        terminated(
+                            tuple((
+                                terminated(LatchControl::parse, opt(space1_escape)),
+                                alt((LogicValue::parse, success(LogicValue::default()))),
+                            )),
+                            ensure_newline,
+                        ),
+                        |(control, init)| LibraryTechnology::Latch(LibraryLatch { control, init }),
+                    ),
                 )),
             )),
             |(name, formal_actual, technology)| LibraryGate {
@@ -272,31 +274,68 @@ impl FsmDescription {
     }
 }
 
-impl<'a> ClockConstraint<'a> {
+impl<'a> ClockEvent<'a> {
     fn parse(input: &'a str) -> IResult<&'a str, Self> {
-        unimplemented_command!(input)
-        /*
+        // .clock_event <event-percent> <event-1> [<event-2> ... <event-n>]
         map(
             tuple((
                 delimited(
-                    terminated(dot_command("cycle"), space1_escape),
-                    f64,
+                    // .clock_event
+                    terminated(dot_command("clock_event"), space1_escape),
+                    // <event-percent>
+                    double,
+                    space1_escape,
+                ),
+                // <event-1> [<event-2> ... <event-n>]
+                terminated(
+                    separated_list1(
+                        space1_escape,
+                        tuple((
+                            terminated(
+                                alt((
+                                    value(RiseFall::Rise, char('r')),
+                                    value(RiseFall::Fall, char('f')),
+                                )),
+                                char('\''),
+                            ),
+                            signal_name,
+                            opt(preceded(
+                                space1_escape,
+                                map(
+                                    separated_pair(double, space1_escape, double),
+                                    |(before, after)| BeforeAfter { before, after },
+                                ),
+                            )),
+                        )),
+                    ),
                     ensure_newline,
                 ),
-                many1(delimited(
-                    terminated(dot_command("clock_event"), space1_escape),
-                    tuple((
-                        terminated(f64, space1_escape),
-                        many1(alt((
-                            value(RiseFall::Rise, char('r')),
-                            value(RiseFall::Fall, char('f')),
-                        ))),
-                    )),
-                )),
             )),
-            |_| {},
+            |(event_percent, events)| Self {
+                event_percent,
+                events,
+            },
         )(input)
-        */
+    }
+}
+
+impl<'a> ClockConstraint<'a> {
+    fn parse(input: &'a str) -> IResult<&'a str, Self> {
+        map(
+            tuple((
+                // .cycle <cycle-time>
+                delimited(
+                    terminated(dot_command("cycle"), space1_escape),
+                    double,
+                    ensure_newline,
+                ),
+                many1(terminated(ClockEvent::parse, ensure_newline)),
+            )),
+            |(cycle_time, clock_events)| Self {
+                cycle_time,
+                clock_events,
+            },
+        )(input)
     }
 }
 
@@ -454,7 +493,7 @@ mod tests {
                     inputs: "10-1",
                     output: '0',
                 },
-                "",
+                "\n",
             ),
             (
                 "-111 0\n",
@@ -462,7 +501,7 @@ mod tests {
                     inputs: "-111",
                     output: '0',
                 },
-                "",
+                "\n",
             ),
             (
                 "0-11 1\n",
@@ -470,7 +509,7 @@ mod tests {
                     inputs: "0-11",
                     output: '1',
                 },
-                "",
+                "\n",
             ),
             (
                 "0-11 1\n# a comment\n",
@@ -478,7 +517,7 @@ mod tests {
                     inputs: "0-11",
                     output: '1',
                 },
-                "",
+                "\n# a comment\n",
             ),
         ]
     );
