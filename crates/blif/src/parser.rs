@@ -59,12 +59,6 @@ fn some_space<'a, E: ParseError<&'a str>>(input: &'a str) -> IResult<&'a str, &'
     recognize(many1_count(space))(input)
 }
 
-macro_rules! unimplemented_command {
-    ($input:expr) => {{
-        context("unimplemented command", fail)($input)
-    }};
-}
-
 // SingleOutput ::= InputPlane+ OutputPlane
 impl<'a> SingleOutput<'a> {
     fn parse<E: ParseError<&'a str> + ContextError<&'a str>>(
@@ -273,8 +267,23 @@ impl<'a> FsmDescription {
     fn parse<E: ParseError<&'a str> + ContextError<&'a str>>(
         input: &'a str,
     ) -> IResult<&'a str, Self, E> {
-        unimplemented_command!(input)
+        context("unimplemented command", fail)(input)
     }
+}
+
+fn basic_event<'a, E: ParseError<&'a str>>(
+    input: &'a str,
+) -> IResult<&'a str, (RiseFall, &'a str), E> {
+    pair(
+        terminated(
+            alt((
+                value(RiseFall::Rise, char('r')),
+                value(RiseFall::Fall, char('f')),
+            )),
+            char('\''),
+        ),
+        ident,
+    )(input)
 }
 
 // ClockEvent ::= ".clock_event" S+ Number S+ EventsList
@@ -282,35 +291,33 @@ impl<'a> FsmDescription {
 // Event      ::= [rf] "'" Ident (S+ Number S+ Number)?
 impl<'a> ClockEvent<'a> {
     fn parse<E: ParseError<&'a str>>(input: &'a str) -> IResult<&'a str, Self, E> {
-        let event = |input| {
-            tuple((
-                terminated(
-                    alt((
-                        value(RiseFall::Rise, char('r')),
-                        value(RiseFall::Fall, char('f')),
-                    )),
-                    char('\''),
-                ),
-                ident,
-                map(
-                    opt(pair(
-                        preceded(some_space, double),
-                        preceded(some_space, double),
-                    )),
-                    |before_after| {
-                        let (before, after) = before_after.unwrap_or((0.0, 0.0));
-                        BeforeAfter { before, after }
-                    },
-                ),
-            ))(input)
-        };
         map(
             tuple((
                 preceded(
                     terminated(dot_command("clock_event"), some_space),
                     terminated(double, some_space),
                 ),
-                separated_list1(some_space, event),
+                separated_list1(
+                    some_space,
+                    map(
+                        pair(
+                            basic_event,
+                            opt(preceded(
+                                some_space,
+                                pair(terminated(double, some_space), double),
+                            )),
+                        ),
+                        |((rise_fall, clock), before_after)| {
+                            let (before, after) = before_after.unwrap_or((0.0, 0.0));
+                            Event {
+                                rise_fall,
+                                clock,
+                                before,
+                                after,
+                            }
+                        },
+                    ),
+                ),
             )),
             |(event_percent, events)| Self {
                 event_percent,
@@ -326,12 +333,11 @@ impl<'a> ClockConstraint<'a> {
     fn parse<E: ParseError<&'a str>>(input: &'a str) -> IResult<&'a str, Self, E> {
         map(
             tuple((
-                preceded(terminated(dot_command("cycle"), some_space), double),
-                delimited(
-                    end_of_line,
-                    separated_list1(end_of_line, ClockEvent::parse),
-                    end_of_line,
+                preceded(
+                    terminated(dot_command("cycle"), some_space),
+                    terminated(double, end_of_line),
                 ),
+                terminated(separated_list1(end_of_line, ClockEvent::parse), end_of_line),
             )),
             |(cycle_time, clock_events)| Self {
                 cycle_time,
@@ -341,7 +347,115 @@ impl<'a> ClockConstraint<'a> {
     }
 }
 
-// DelayConstraint     ::= DelayConstraintKind (EOF DelayConstraintKind)*
+// Delay       ::= ".delay" S+ Ident S+ DelayFields
+// DelayFields ::= Phase S+ Number S+ Number S+ Number S+ Number S+ Number S+ Number
+// Phase       ::= "INV" | "NONINV" | "UNKNOWN"
+impl<'a> Delay<'a> {
+    fn parse<E: ParseError<&'a str>>(input: &'a str) -> IResult<&'a str, Self, E> {
+        map(
+            tuple((
+                delimited(
+                    terminated(dot_command("delay"), some_space),
+                    ident,
+                    some_space,
+                ),
+                terminated(
+                    alt((
+                        value(DelayPhase::Inverting, tag("INV")),
+                        value(DelayPhase::NonInverting, tag("NONINV")),
+                        value(DelayPhase::Unknown, tag("UNKNOWN")),
+                    )),
+                    some_space,
+                ),
+                terminated(double, some_space),
+                terminated(double, some_space),
+                terminated(double, some_space),
+                terminated(double, some_space),
+                terminated(double, some_space),
+                double,
+            )),
+            |(in_name, phase, load, max_load, block_rise, drive_rise, block_fall, drive_fall)| {
+                Self {
+                    in_name,
+                    phase,
+                    load,
+                    max_load,
+                    block_rise,
+                    drive_rise,
+                    block_fall,
+                    drive_fall,
+                }
+            },
+        )(input)
+    }
+}
+
+fn before_after_event<'a, E: ParseError<&'a str>>(
+    input: &'a str,
+) -> IResult<&'a str, (BeforeAfter, RiseFall, &'a str), E> {
+    map(
+        pair(
+            terminated(
+                alt((
+                    value(BeforeAfter::Before, char('b')),
+                    value(BeforeAfter::After, char('a')),
+                )),
+                some_space,
+            ),
+            basic_event,
+        ),
+        |(before_after, (rise_fall, clock))| (before_after, rise_fall, clock),
+    )(input)
+}
+
+// InputArrival ::= ".input_arrival" S+ Ident S+ Number S+ Number (S+ BeforeAfter S+ Event)?
+// BeforeAfter  ::= [ba]
+impl<'a> InputArrival<'a> {
+    fn parse<E: ParseError<&'a str>>(input: &'a str) -> IResult<&'a str, Self, E> {
+        map(
+            tuple((
+                delimited(
+                    terminated(dot_command("input_arrival"), some_space),
+                    ident,
+                    some_space,
+                ),
+                terminated(double, some_space),
+                double,
+                opt(preceded(some_space, before_after_event)),
+            )),
+            |(in_name, rise, fall, event)| Self {
+                in_name,
+                rise,
+                fall,
+                event,
+            },
+        )(input)
+    }
+}
+
+// OutputRequired ::= ".output_required" S+ Ident S+ Number S+ Number (S+ BeforeAfter S+ Event)?
+impl<'a> OutputRequired<'a> {
+    fn parse<E: ParseError<&'a str>>(input: &'a str) -> IResult<&'a str, Self, E> {
+        map(
+            tuple((
+                preceded(
+                    terminated(dot_command("output_required"), some_space),
+                    terminated(ident, some_space),
+                ),
+                terminated(double, some_space),
+                terminated(double, some_space),
+                opt(preceded(some_space, before_after_event)),
+            )),
+            |(out_name, rise, fall, event)| Self {
+                out_name,
+                rise,
+                fall,
+                event,
+            },
+        )(input)
+    }
+}
+
 // DelayConstraintKind ::= Area              |
 //                         Delay             |
 //                         WireLoadSlope     |
@@ -356,37 +470,163 @@ impl<'a> ClockConstraint<'a> {
 //                         DefMaxInputLoad   |
 //                         OutputLoad        |
 //                         DefOutputLoad
-//
-// Area              ::= ".area" S+ Number
-// Delay             ::= ".delay" S+ Ident S+ DelayFields
-// DelayFields       ::= Phase S+ Number S+ Number S+ Number S+ Number S+ Number S+ Number
-// Phase             ::= "INV" | "NONINV" | "UNKNOWN"
-// WireLoadSlope     ::= ".wire_load_slope" S+ Number
-// Wire              ::= ".wire" S+ WireLoadList
-// WireLoadList      ::= Number (S+ Number)*
-// InputArrival      ::= ".input_arrival" S+ Ident S+ Number S+ Number (S+ BeforeAfter S+ Event)?
-// BeforeAfter       ::= [ba]
-// DefInputArrival   ::= ".default_input_arrival" S+ Number S+ Number
-// OutputRequired    ::= ".output_required" S+ Ident S+ Number S+ Number (S+ BeforeAfter S+ Event)?
-// DefOutputRequired ::= ".default_output_required" S+ Number S+ Number
-// InputDrive        ::= ".input_drive" S+ Ident S+ Number S+ Number
-// DefInputDrive     ::= ".default_input_drive" S+ Number S+ Number
-// MaxInputLoad      ::= ".max_input_load" S+ Number
-// DefMaxInputLoad   ::= ".default_max_input_load" S+ Number
-// OutputLoad        ::= ".output_load" S+ Ident S+ Number
-// DefOutputLoad     ::= ".default_output_load" S+ Number
-impl<'a> DelayConstraint {
+impl<'a> DelayConstraintKind<'a> {
     fn parse<E: ParseError<&'a str> + ContextError<&'a str>>(
         input: &'a str,
     ) -> IResult<&'a str, Self, E> {
-        unimplemented_command!(input)
+        // Area ::= ".area" S+ Number
+        let area = |input| {
+            map(
+                preceded(terminated(dot_command("area"), some_space), double),
+                DelayConstraintKind::Area,
+            )(input)
+        };
+        // WireLoadSlope ::= ".wire_load_slope" S+ Number
+        let wire_load_slope = |input| {
+            map(
+                preceded(
+                    terminated(dot_command("wire_load_slope"), some_space),
+                    double,
+                ),
+                DelayConstraintKind::WireLoadSlope,
+            )(input)
+        };
+        // Wire         ::= ".wire" S+ WireLoadList
+        // WireLoadList ::= Number (S+ Number)*
+        let wire = |input| {
+            map(
+                preceded(
+                    terminated(dot_command("wire"), some_space),
+                    separated_list1(some_space, double),
+                ),
+                DelayConstraintKind::Wire,
+            )(input)
+        };
+        // DefInputArrival ::= ".default_input_arrival" S+ Number S+ Number
+        let default_input_arrival = |input| {
+            map(
+                pair(
+                    preceded(
+                        terminated(dot_command("default_input_arrival"), some_space),
+                        terminated(double, some_space),
+                    ),
+                    double,
+                ),
+                DelayConstraintKind::DefaultInputArrival,
+            )(input)
+        };
+        // DefOutputRequired ::= ".default_output_required" S+ Number S+ Number
+        let default_output_required = |input| {
+            map(
+                pair(
+                    preceded(
+                        terminated(dot_command("default_output_required"), some_space),
+                        terminated(double, some_space),
+                    ),
+                    double,
+                ),
+                DelayConstraintKind::DefaultOutputRequired,
+            )(input)
+        };
+        // InputDrive ::= ".input_drive" S+ Ident S+ Number S+ Number
+        let input_drive = |input| {
+            map(
+                tuple((
+                    preceded(
+                        terminated(dot_command("input_drive"), some_space),
+                        terminated(ident, some_space),
+                    ),
+                    terminated(double, some_space),
+                    double,
+                )),
+                DelayConstraintKind::InputDrive,
+            )(input)
+        };
+        // DefInputDrive ::= ".default_input_drive" S+ Number S+ Number
+        let default_input_drive = |input| {
+            map(
+                pair(
+                    preceded(
+                        terminated(dot_command("default_input_drive"), some_space),
+                        terminated(double, some_space),
+                    ),
+                    double,
+                ),
+                DelayConstraintKind::DefaultInputDrive,
+            )(input)
+        };
+        // MaxInputLoad ::= ".max_input_load" S+ Number
+        let max_input_load = |input| {
+            map(
+                preceded(
+                    terminated(dot_command("max_input_load"), some_space),
+                    double,
+                ),
+                DelayConstraintKind::MaxInputLoad,
+            )(input)
+        };
+        // DefMaxInputLoad ::= ".default_max_input_load" S+ Number
+        let default_max_input_load = |input| {
+            map(
+                preceded(
+                    terminated(dot_command("default_max_input_load"), some_space),
+                    double,
+                ),
+                DelayConstraintKind::DefaultMaxInputLoad,
+            )(input)
+        };
+        // OutputLoad ::= ".output_load" S+ Ident S+ Number
+        let output_load = |input| {
+            map(
+                pair(
+                    preceded(
+                        terminated(dot_command("output_load"), some_space),
+                        terminated(ident, some_space),
+                    ),
+                    double,
+                ),
+                DelayConstraintKind::OutputLoad,
+            )(input)
+        };
+        // DefOutputLoad ::= ".default_output_load" S+ Number
+        let default_output_load = |input| {
+            map(
+                preceded(
+                    terminated(dot_command("default_output_load"), some_space),
+                    double,
+                ),
+                DelayConstraintKind::DefaultOutputLoad,
+            )(input)
+        };
+        alt((
+            area,
+            map(Delay::parse, DelayConstraintKind::Delay),
+            wire_load_slope,
+            wire,
+            map(InputArrival::parse, DelayConstraintKind::InputArrival),
+            default_input_arrival,
+            map(OutputRequired::parse, DelayConstraintKind::OutputRequired),
+            default_output_required,
+            input_drive,
+            default_input_drive,
+            max_input_load,
+            default_max_input_load,
+            output_load,
+            default_output_load,
+        ))(input)
     }
 }
 
-macro_rules! command_parser {
-    ($name:ident => $struct:ident) => {
-        map($struct::parse, |$name| Command::$struct($name))
-    };
+// DelayConstraint ::= DelayConstraintKind (EOF DelayConstraintKind)*
+impl<'a> DelayConstraint<'a> {
+    fn parse<E: ParseError<&'a str> + ContextError<&'a str>>(
+        input: &'a str,
+    ) -> IResult<&'a str, Self, E> {
+        map(
+            separated_list1(end_of_line, DelayConstraintKind::parse),
+            |constraints| DelayConstraint { constraints },
+        )(input)
+    }
 }
 
 // Command ::= LogicGate        |
@@ -402,14 +642,14 @@ impl<'a> Command<'a> {
         input: &'a str,
     ) -> IResult<&'a str, Self, E> {
         alt((
-            command_parser!(logic_gate => LogicGate),
-            command_parser!(generic_latch => GenericLatch),
-            command_parser!(library_gate => LibraryGate),
-            command_parser!(model_reference => ModelReference),
-            command_parser!(subfile_reference => SubfileReference),
-            command_parser!(fsm_description => FsmDescription),
-            command_parser!(clock_constraint => ClockConstraint),
-            command_parser!(delay_constraint => DelayConstraint),
+            map(LogicGate::parse, Command::LogicGate),
+            map(GenericLatch::parse, Command::GenericLatch),
+            map(LibraryGate::parse, Command::LibraryGate),
+            map(ModelReference::parse, Command::ModelReference),
+            map(SubfileReference::parse, Command::SubfileReference),
+            map(FsmDescription::parse, Command::FsmDescription),
+            map(ClockConstraint::parse, Command::ClockConstraint),
+            map(DelayConstraint::parse, Command::DelayConstraint),
         ))(input)
     }
 }
@@ -759,34 +999,28 @@ e
                     ClockEvent {
                         event_percent: 50.0,
                         events: vec![
-                            (
-                                RiseFall::Rise,
-                                "clk1",
-                                BeforeAfter {
-                                    before: 0.0,
-                                    after: 0.0
-                                }
-                            ),
-                            (
-                                RiseFall::Fall,
-                                "clk2",
-                                BeforeAfter {
-                                    before: 0.0,
-                                    after: 0.0
-                                }
-                            )
+                            Event {
+                                rise_fall: RiseFall::Rise,
+                                clock: "clk1",
+                                before: 0.0,
+                                after: 0.0,
+                            },
+                            Event {
+                                rise_fall: RiseFall::Fall,
+                                clock: "clk2",
+                                before: 0.0,
+                                after: 0.0
+                            }
                         ]
                     },
                     ClockEvent {
                         event_percent: 75.0,
-                        events: vec![(
-                            RiseFall::Fall,
-                            "global",
-                            BeforeAfter {
-                                before: 1.0,
-                                after: 1.0
-                            }
-                        ),]
+                        events: vec![Event {
+                            rise_fall: RiseFall::Fall,
+                            clock: "global",
+                            before: 1.0,
+                            after: 1.0
+                        },]
                     }
                 ]
             },
