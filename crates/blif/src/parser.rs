@@ -8,7 +8,7 @@ use nom::{
     character::complete::{char, line_ending, not_line_ending, one_of, satisfy},
     combinator::{fail, map, opt, recognize, success, value},
     error::{context, ContextError, ParseError},
-    multi::{many0_count, many1, many1_count, separated_list1},
+    multi::{many0_count, many1_count, separated_list1},
     number::complete::double,
     sequence::{delimited, pair, preceded, separated_pair, terminated, tuple},
     IResult,
@@ -24,16 +24,15 @@ fn ident<'a, E: ParseError<&'a str>>(input: &'a str) -> IResult<&'a str, &'a str
     })))(input)
 }
 
+// .Ident
 fn dot_command<'a, E: ParseError<&'a str>>(
     command: &'static str,
 ) -> impl FnMut(&'a str) -> IResult<&'a str, &'a str, E> {
-    // .<command>
     preceded(char('.'), tag(command))
 }
 
 // Comment ::= '#' [^\n]* \n
 fn comment<'a, E: ParseError<&'a str>>(input: &'a str) -> IResult<&'a str, &'a str, E> {
-    // # ...
     delimited(char('#'), not_line_ending, line_ending)(input)
 }
 
@@ -45,14 +44,17 @@ fn end_of_line<'a, E: ParseError<&'a str>>(input: &'a str) -> IResult<&'a str, &
     )))(input)
 }
 
+// S ::= [ \t] | "\\\n"
 fn space<'a, E: ParseError<&'a str>>(input: &'a str) -> IResult<&'a str, &'a str, E> {
     alt((recognize(one_of(" \t")), tag("\\\n")))(input)
 }
 
+// S*
 fn many_space<'a, E: ParseError<&'a str>>(input: &'a str) -> IResult<&'a str, &'a str, E> {
     recognize(many0_count(space))(input)
 }
 
+// S+
 fn some_space<'a, E: ParseError<&'a str>>(input: &'a str) -> IResult<&'a str, &'a str, E> {
     recognize(many1_count(space))(input)
 }
@@ -63,6 +65,7 @@ macro_rules! unimplemented_command {
     }};
 }
 
+// SingleOutput ::= InputPlane+ OutputPlane
 impl<'a> SingleOutput<'a> {
     fn parse<E: ParseError<&'a str> + ContextError<&'a str>>(
         input: &'a str,
@@ -265,6 +268,7 @@ impl<'a> SubfileReference<'a> {
     }
 }
 
+// FsmDescription ::= UNIMPLEMENTED
 impl<'a> FsmDescription {
     fn parse<E: ParseError<&'a str> + ContextError<&'a str>>(
         input: &'a str,
@@ -273,42 +277,40 @@ impl<'a> FsmDescription {
     }
 }
 
+// ClockEvent ::= ".clock_event" S+ Number S+ EventsList
+// EventsList ::= Event (S+ Event)*
+// Event      ::= [rf] "'" Ident (S+ Number S+ Number)?
 impl<'a> ClockEvent<'a> {
     fn parse<E: ParseError<&'a str>>(input: &'a str) -> IResult<&'a str, Self, E> {
-        // .clock_event <event-percent> <event-1> [<event-2> ... <event-n>]
+        let event = |input| {
+            tuple((
+                terminated(
+                    alt((
+                        value(RiseFall::Rise, char('r')),
+                        value(RiseFall::Fall, char('f')),
+                    )),
+                    char('\''),
+                ),
+                ident,
+                map(
+                    opt(pair(
+                        preceded(some_space, double),
+                        preceded(some_space, double),
+                    )),
+                    |before_after| {
+                        let (before, after) = before_after.unwrap_or((0.0, 0.0));
+                        BeforeAfter { before, after }
+                    },
+                ),
+            ))(input)
+        };
         map(
             tuple((
-                delimited(
-                    // .clock_event
+                preceded(
                     terminated(dot_command("clock_event"), some_space),
-                    // <event-percent>
-                    double,
-                    some_space,
+                    terminated(double, some_space),
                 ),
-                // <event-1> [<event-2> ... <event-n>]
-                terminated(
-                    separated_list1(
-                        some_space,
-                        tuple((
-                            terminated(
-                                alt((
-                                    value(RiseFall::Rise, char('r')),
-                                    value(RiseFall::Fall, char('f')),
-                                )),
-                                char('\''),
-                            ),
-                            ident,
-                            opt(preceded(
-                                some_space,
-                                map(
-                                    separated_pair(double, some_space, double),
-                                    |(before, after)| BeforeAfter { before, after },
-                                ),
-                            )),
-                        )),
-                    ),
-                    end_of_line,
-                ),
+                separated_list1(some_space, event),
             )),
             |(event_percent, events)| Self {
                 event_percent,
@@ -318,18 +320,18 @@ impl<'a> ClockEvent<'a> {
     }
 }
 
+// ClockConstraint ::= ".cycle" S+ Number EOL ClockEvents EOL
+// ClockEvents     ::= ClockEvent (EOL ClockEvent)*
 impl<'a> ClockConstraint<'a> {
     fn parse<E: ParseError<&'a str>>(input: &'a str) -> IResult<&'a str, Self, E> {
         map(
             tuple((
-                // .cycle <cycle-time>
+                preceded(terminated(dot_command("cycle"), some_space), double),
                 delimited(
-                    terminated(dot_command("cycle"), some_space),
-                    double,
+                    end_of_line,
+                    separated_list1(end_of_line, ClockEvent::parse),
                     end_of_line,
                 ),
-                // .clock_event <event-percent> <event-1> [<event-2> ... <event-n>]
-                many1(terminated(ClockEvent::parse, end_of_line)),
             )),
             |(cycle_time, clock_events)| Self {
                 cycle_time,
@@ -339,6 +341,40 @@ impl<'a> ClockConstraint<'a> {
     }
 }
 
+// DelayConstraint     ::= DelayConstraintKind (EOF DelayConstraintKind)*
+// DelayConstraintKind ::= Area              |
+//                         Delay             |
+//                         WireLoadSlope     |
+//                         Wire              |
+//                         InputArrival      |
+//                         DefInputArrival   |
+//                         OutputRequired    |
+//                         DefOutputRequired |
+//                         InputDrive        |
+//                         DefInputDrive     |
+//                         MaxInputLoad      |
+//                         DefMaxInputLoad   |
+//                         OutputLoad        |
+//                         DefOutputLoad
+//
+// Area              ::= ".area" S+ Number
+// Delay             ::= ".delay" S+ Ident S+ DelayFields
+// DelayFields       ::= Phase S+ Number S+ Number S+ Number S+ Number S+ Number S+ Number
+// Phase             ::= "INV" | "NONINV" | "UNKNOWN"
+// WireLoadSlope     ::= ".wire_load_slope" S+ Number
+// Wire              ::= ".wire" S+ WireLoadList
+// WireLoadList      ::= Number (S+ Number)*
+// InputArrival      ::= ".input_arrival" S+ Ident S+ Number S+ Number (S+ BeforeAfter S+ Event)?
+// BeforeAfter       ::= [ba]
+// DefInputArrival   ::= ".default_input_arrival" S+ Number S+ Number
+// OutputRequired    ::= ".output_required" S+ Ident S+ Number S+ Number (S+ BeforeAfter S+ Event)?
+// DefOutputRequired ::= ".default_output_required" S+ Number S+ Number
+// InputDrive        ::= ".input_drive" S+ Ident S+ Number S+ Number
+// DefInputDrive     ::= ".default_input_drive" S+ Number S+ Number
+// MaxInputLoad      ::= ".max_input_load" S+ Number
+// DefMaxInputLoad   ::= ".default_max_input_load" S+ Number
+// OutputLoad        ::= ".output_load" S+ Ident S+ Number
+// DefOutputLoad     ::= ".default_output_load" S+ Number
 impl<'a> DelayConstraint {
     fn parse<E: ParseError<&'a str> + ContextError<&'a str>>(
         input: &'a str,
@@ -353,6 +389,14 @@ macro_rules! command_parser {
     };
 }
 
+// Command ::= LogicGate        |
+//             GenericLatch     |
+//             LibraryGate      |
+//             ModelReference   |
+//             SubfileReference |
+//             FsmDescription   |
+//             ClockConstraint  |
+//             DelayConstraint
 impl<'a> Command<'a> {
     fn parse<E: ParseError<&'a str> + ContextError<&'a str>>(
         input: &'a str,
@@ -473,6 +517,21 @@ mod tests {
                 for (input, expected, rest) in tests {
                     let result: IResult<_, _, VerboseError<&str>> = $test_fn(input);
                     if let Ok((remaining, actual)) = result {
+                        /*
+                        if actual != expected {
+                            println!("parser succeeded but did not get expected value");
+                            println!("expected:\n{:#?}", expected);
+                            println!("actual:\n{:#?}", actual);
+                        }
+                        if remaining != rest {
+                            println!("parser succeeded but remaining is not as expected");
+                            println!("expected remaining:\n{:#?}", rest);
+                            println!("actual remaining:\n{:#?}", remaining);
+                        }
+                        if actual != expected || remaining != rest {
+                            panic!();
+                        }
+                        */
                         assert_eq!(actual, expected);
                         assert_eq!(remaining, rest);
                     } else {
@@ -681,6 +740,55 @@ e
             ".search myFunkyFile.blif",
             SubfileReference {
                 filename: path::Path::new("myFunkyFile.blif")
+            },
+            ""
+        )]
+    );
+
+    test_parser!(
+        test_clock_constraint,
+        ClockConstraint::parse,
+        [(
+            r#".cycle 10
+.clock_event 50 r'clk1 f'clk2
+.clock_event 75 f'global 1 1
+"#,
+            ClockConstraint {
+                cycle_time: 10.0,
+                clock_events: vec![
+                    ClockEvent {
+                        event_percent: 50.0,
+                        events: vec![
+                            (
+                                RiseFall::Rise,
+                                "clk1",
+                                BeforeAfter {
+                                    before: 0.0,
+                                    after: 0.0
+                                }
+                            ),
+                            (
+                                RiseFall::Fall,
+                                "clk2",
+                                BeforeAfter {
+                                    before: 0.0,
+                                    after: 0.0
+                                }
+                            )
+                        ]
+                    },
+                    ClockEvent {
+                        event_percent: 75.0,
+                        events: vec![(
+                            RiseFall::Fall,
+                            "global",
+                            BeforeAfter {
+                                before: 1.0,
+                                after: 1.0
+                            }
+                        ),]
+                    }
+                ]
             },
             ""
         )]

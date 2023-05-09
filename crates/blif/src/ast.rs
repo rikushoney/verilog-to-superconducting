@@ -90,6 +90,15 @@ pub struct BeforeAfter {
     pub after: f64,
 }
 
+impl Default for BeforeAfter {
+    fn default() -> Self {
+        Self {
+            before: 0.0,
+            after: 0.0,
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub enum RiseFall {
     Rise,
@@ -99,7 +108,7 @@ pub enum RiseFall {
 #[derive(Clone, Debug, PartialEq)]
 pub struct ClockEvent<'a> {
     pub event_percent: f64,
-    pub events: Vec<(RiseFall, &'a str, Option<BeforeAfter>)>,
+    pub events: Vec<(RiseFall, &'a str, BeforeAfter)>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
