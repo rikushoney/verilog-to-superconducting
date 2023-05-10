@@ -45,7 +45,20 @@ ModelReference      ::= ".subckt" S+ Ident S+ FormalActualList
 
 SubfileReference    ::= ".search" S+ Ident
 
-FsmDescription      ::= UNIMPLEMENTED
+FsmDescription      ::= ".start_kiss" EOL FsmFields EOL StateMapping EOL ".end_kiss" (EOL FsmEnd)?
+FsmFields           ::= NumInputs EOL NumOutputs EOL (NumTerms EOL NumStates EOL ResetState EOL)?
+NumInputs           ::= ".i" S+ PosInt
+NumOutputs          ::= ".o" S+ PosInt
+NumTerms            ::= ".p" S+ PosInt
+NumStates           ::= ".s" S+ PosInt
+ResetState          ::= ".r" S+ Ident
+StateMapping        ::= StateTransition (EOL StateTransition)*
+StateTransition     ::= ([01] | DontCare) S+ Ident S+ Ident S+ ([01] | DontCare)
+FsmEnd              ::= LatchOrder (EOL CodeMapping)?
+LatchOrder          ::= ".latch_order" S+ LatchOrderList
+LatchOrderList      ::= Ident (S+ Ident)*
+CodeMapping         ::= CodeMap (EOL CodeMap)*
+CodeMap             ::= ".code" S+ Ident S+ Ident
 
 ClockConstraint     ::= ".cycle" S+ Number EOL ClockEvents EOL
 ClockEvents         ::= ClockEvent (EOL ClockEvent)*
@@ -89,6 +102,7 @@ OutputLoad          ::= ".output_load" S+ Ident S+ Number
 DefOutputLoad       ::= ".default_output_load" S+ Number
 
 Number              ::= [0-9]+ ("." [0-9]+)? ([eE] [+-] [0-9]+)?
+PosInt              ::= [0-9]+ - "0"
 Ident               ::= ([^#=] - S)+
 Comment             ::= '#' [^\n]* \n
 S                   ::= [ \t] | "\\\n"
