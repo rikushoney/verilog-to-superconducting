@@ -5,15 +5,16 @@ use crate::ast::*;
 use nom::{
     branch::alt,
     bytes::complete::tag,
-    character::complete::{char, line_ending, not_line_ending, one_of, satisfy},
-    combinator::{fail, map, opt, recognize, success, value},
-    error::{context, ContextError, ParseError},
+    character::complete::{char, digit0, line_ending, not_line_ending, one_of, satisfy},
+    combinator::{map, map_res, opt, recognize, success, value, verify},
+    error::{ContextError, FromExternalError, ParseError},
     multi::{many0_count, many1_count, separated_list1},
     number::complete::double,
     sequence::{delimited, pair, preceded, separated_pair, terminated, tuple},
     IResult,
 };
 
+use std::num::ParseIntError;
 use std::path;
 
 // Ident ::= ([^#=] - S)+
@@ -57,6 +58,13 @@ fn many_space<'a, E: ParseError<&'a str>>(input: &'a str) -> IResult<&'a str, &'
 // S+
 fn some_space<'a, E: ParseError<&'a str>>(input: &'a str) -> IResult<&'a str, &'a str, E> {
     recognize(many1_count(space))(input)
+}
+
+// PosInt ::= [0-9]+ - "0"
+fn positive_integer<'a, E: ParseError<&'a str> + FromExternalError<&'a str, ParseIntError>>(
+    input: &'a str,
+) -> IResult<&'a str, usize, E> {
+    verify(map_res(digit0, |int: &'a str| int.parse()), |int| *int != 0)(input)
 }
 
 // SingleOutput ::= InputPlane+ OutputPlane
@@ -262,12 +270,91 @@ impl<'a> SubfileReference<'a> {
     }
 }
 
-// FsmDescription ::= UNIMPLEMENTED
+// FsmDescription  ::= ".start_kiss" EOL FsmFields EOL StateMapping EOL ".end_kiss" FsmEnd
+// FsmFields       ::= NumInputs EOL NumOutputs (EOL NumTerms)? (EOL NumStates)? (EOL ResetState)?
+// NumInputs       ::= ".i" S+ PosInt
+// NumOutputs      ::= ".o" S+ PosInt
+// NumTerms        ::= ".p" S+ PosInt
+// NumStates       ::= ".s" S+ PosInt
+// ResetState      ::= ".r" S+ Ident
+// StateMapping    ::= StateTransition (EOL StateTransition)*
+// StateTransition ::= ([01] | DontCare) S+ Ident S+ Ident S+ ([01] | DontCare)
+// FsmEnd          ::= (EOL LatchOrder)? (EOL CodeMapping)?
+// LatchOrder      ::= ".latch_order" S+ LatchOrderList
+// LatchOrderList  ::= Ident (S+ Ident)*
+// CodeMapping     ::= CodeMap (EOL CodeMap)*
+// CodeMap         ::= ".code" S+ Ident S+ Ident
 impl<'a> FsmDescription {
-    fn parse<E: ParseError<&'a str> + ContextError<&'a str>>(
+    fn parse<
+        E: ParseError<&'a str> + ContextError<&'a str> + FromExternalError<&'a str, ParseIntError>,
+    >(
         input: &'a str,
     ) -> IResult<&'a str, Self, E> {
-        context("unimplemented command", fail)(input)
+        let logic_value = |input| {
+            alt((
+                value(LogicValue::Zero, char('0')),
+                value(LogicValue::One, char('1')),
+                value(LogicValue::DontCare, one_of("-xX")),
+            ))(input)
+        };
+        map(
+            tuple((
+                delimited(
+                    terminated(dot_command("start_kiss"), end_of_line),
+                    preceded(terminated(dot_command("i"), some_space), positive_integer),
+                    end_of_line,
+                ),
+                preceded(terminated(dot_command("o"), some_space), positive_integer),
+                opt(preceded(
+                    delimited(end_of_line, dot_command("p"), some_space),
+                    positive_integer,
+                )),
+                opt(preceded(
+                    delimited(end_of_line, dot_command("s"), some_space),
+                    positive_integer,
+                )),
+                opt(preceded(
+                    delimited(end_of_line, dot_command("r"), some_space),
+                    ident,
+                )),
+                terminated(
+                    separated_list1(
+                        end_of_line,
+                        tuple((
+                            terminated(logic_value, some_space),
+                            terminated(ident, some_space),
+                            terminated(ident, some_space),
+                            logic_value,
+                        )),
+                    ),
+                    preceded(end_of_line, dot_command("end_kiss")),
+                ),
+                opt(preceded(
+                    delimited(end_of_line, dot_command("latch_order"), some_space),
+                    separated_list1(some_space, ident),
+                )),
+                opt(preceded(
+                    end_of_line,
+                    separated_list1(
+                        end_of_line,
+                        preceded(
+                            terminated(dot_command("code"), some_space),
+                            pair(terminated(ident, some_space), ident),
+                        ),
+                    ),
+                )),
+            )),
+            |(
+                _num_inputs,
+                _num_outputs,
+                _num_terms,
+                _num_states,
+                _reset_state,
+                _state_mapping,
+                _latch_order,
+                _code_mapping,
+            )| { Self {} },
+        )(input)
     }
 }
 
@@ -638,7 +725,9 @@ impl<'a> DelayConstraint<'a> {
 //             ClockConstraint  |
 //             DelayConstraint
 impl<'a> Command<'a> {
-    fn parse<E: ParseError<&'a str> + ContextError<&'a str>>(
+    fn parse<
+        E: ParseError<&'a str> + ContextError<&'a str> + FromExternalError<&'a str, ParseIntError>,
+    >(
         input: &'a str,
     ) -> IResult<&'a str, Self, E> {
         alt((
@@ -696,7 +785,10 @@ fn model_fields<'a, E: ParseError<&'a str>>(
 }
 
 // Commands ::= Command (EOL Command)*
-fn commands<'a, E: ParseError<&'a str> + ContextError<&'a str>>(
+fn commands<
+    'a,
+    E: ParseError<&'a str> + ContextError<&'a str> + FromExternalError<&'a str, ParseIntError>,
+>(
     input: &'a str,
 ) -> IResult<&'a str, Vec<Command>, E> {
     separated_list1(end_of_line, Command::parse)(input)
@@ -704,7 +796,9 @@ fn commands<'a, E: ParseError<&'a str> + ContextError<&'a str>>(
 
 // Model ::= ".model" S+ Ident EOL ModelFields EOL Commands (EOL ".end")?
 impl<'a> Model<'a> {
-    fn parse<E: ParseError<&'a str> + ContextError<&'a str>>(
+    fn parse<
+        E: ParseError<&'a str> + ContextError<&'a str> + FromExternalError<&'a str, ParseIntError>,
+    >(
         input: &'a str,
     ) -> IResult<&str, Self, E> {
         map(
@@ -799,6 +893,12 @@ mod tests {
             ("a[0] a[1]", "a[0]", " a[1]"),
             ("A.B.C\n", "A.B.C", "\n"),
         ]
+    );
+
+    test_parser!(
+        test_positive_integer,
+        positive_integer,
+        [("123", 123, ""), ("1024", 1024, ""), ("012", 12, "")]
     );
 
     test_parser!(

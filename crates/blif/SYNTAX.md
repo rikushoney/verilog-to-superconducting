@@ -45,8 +45,8 @@ ModelReference      ::= ".subckt" S+ Ident S+ FormalActualList
 
 SubfileReference    ::= ".search" S+ Ident
 
-FsmDescription      ::= ".start_kiss" EOL FsmFields EOL StateMapping EOL ".end_kiss" (EOL FsmEnd)?
-FsmFields           ::= NumInputs EOL NumOutputs EOL (NumTerms EOL NumStates EOL ResetState EOL)?
+FsmDescription      ::= ".start_kiss" EOL FsmFields EOL StateMapping EOL ".end_kiss" FsmEnd
+FsmFields           ::= NumInputs EOL NumOutputs (EOL NumTerms)? (EOL NumStates)? (EOL ResetState)?
 NumInputs           ::= ".i" S+ PosInt
 NumOutputs          ::= ".o" S+ PosInt
 NumTerms            ::= ".p" S+ PosInt
@@ -54,7 +54,7 @@ NumStates           ::= ".s" S+ PosInt
 ResetState          ::= ".r" S+ Ident
 StateMapping        ::= StateTransition (EOL StateTransition)*
 StateTransition     ::= ([01] | DontCare) S+ Ident S+ Ident S+ ([01] | DontCare)
-FsmEnd              ::= LatchOrder (EOL CodeMapping)?
+FsmEnd              ::= (EOL LatchOrder)? (EOL CodeMapping)?
 LatchOrder          ::= ".latch_order" S+ LatchOrderList
 LatchOrderList      ::= Ident (S+ Ident)*
 CodeMapping         ::= CodeMap (EOL CodeMap)*
