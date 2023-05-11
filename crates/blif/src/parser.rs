@@ -32,12 +32,12 @@ fn dot_command<'a, E: ParseError<&'a str>>(
     preceded(char('.'), tag(command))
 }
 
-// Comment ::= '#' [^\n]* \n
+// Comment ::= '#' [^\n]* "\n"
 fn comment<'a, E: ParseError<&'a str>>(input: &'a str) -> IResult<&'a str, &'a str, E> {
     delimited(char('#'), not_line_ending, line_ending)(input)
 }
 
-// EOL ::= S* (S* (\n | Comment) S*)+
+// EOL ::= S* (S* ("\n" | Comment) S*)+
 fn end_of_line<'a, E: ParseError<&'a str>>(input: &'a str) -> IResult<&'a str, &'a str, E> {
     recognize(tuple((
         many_space,

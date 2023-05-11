@@ -104,7 +104,7 @@ DefOutputLoad       ::= ".default_output_load" S+ Number
 Number              ::= [0-9]+ ("." [0-9]+)? ([eE] [+-] [0-9]+)?
 PosInt              ::= [0-9]+ - "0"
 Ident               ::= ([^#=] - S)+
-Comment             ::= '#' [^\n]* \n
+Comment             ::= '#' [^\n]* "\n"
 S                   ::= [ \t] | "\\\n"
-EOL                 ::= S* (S* (\n | Comment) S*)+
+EOL                 ::= S* (S* ("\n" | Comment) S*)+
 ```
