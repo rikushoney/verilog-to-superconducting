@@ -163,7 +163,7 @@ pub enum DelayConstraintKind<'a> {
     DefaultOutputRequired((f64, f64)),
     InputDrive((&'a str, f64, f64)),
     DefaultInputDrive((f64, f64)),
-    MaxInputLoad(f64),
+    MaxInputLoad((&'a str, f64)),
     DefaultMaxInputLoad(f64),
     OutputLoad((&'a str, f64)),
     DefaultOutputLoad(f64),

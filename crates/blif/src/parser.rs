@@ -525,12 +525,13 @@ impl<'a> OutputRequired<'a> {
     fn parse<E: ParseError<&'a str>>(input: &'a str) -> IResult<&'a str, Self, E> {
         map(
             tuple((
-                preceded(
+                delimited(
                     terminated(dot_command("output_required"), some_space),
-                    terminated(ident, some_space),
+                    ident,
+                    some_space,
                 ),
                 terminated(double, some_space),
-                terminated(double, some_space),
+                double,
                 opt(preceded(some_space, before_after_event)),
             )),
             |(out_name, rise, fall, event)| Self {
@@ -642,11 +643,14 @@ impl<'a> DelayConstraintKind<'a> {
                 DelayConstraintKind::DefaultInputDrive,
             )(input)
         };
-        // MaxInputLoad ::= ".max_input_load" S+ Number
+        // MaxInputLoad ::= ".max_input_load" S+ Ident S+ Number
         let max_input_load = |input| {
             map(
-                preceded(
-                    terminated(dot_command("max_input_load"), some_space),
+                pair(
+                    preceded(
+                        terminated(dot_command("max_input_load"), some_space),
+                        terminated(ident, some_space),
+                    ),
                     double,
                 ),
                 DelayConstraintKind::MaxInputLoad,
@@ -1126,6 +1130,154 @@ e
             },
             ""
         )]
+    );
+
+    test_parser!(
+        test_delay_constraint,
+        DelayConstraint::parse,
+        [
+            (
+                ".area 10",
+                DelayConstraint {
+                    constraints: vec![DelayConstraintKind::Area(10.0)]
+                },
+                ""
+            ),
+            (
+                ".delay input_a INV 5.0 10 2.5 3.1 2.7 2.43",
+                DelayConstraint {
+                    constraints: vec![DelayConstraintKind::Delay(Delay {
+                        in_name: "input_a",
+                        phase: DelayPhase::Inverting,
+                        load: 5.0,
+                        max_load: 10.0,
+                        block_rise: 2.5,
+                        drive_rise: 3.1,
+                        block_fall: 2.7,
+                        drive_fall: 2.43,
+                    })]
+                },
+                ""
+            ),
+            (
+                ".wire_load_slope 3.141",
+                DelayConstraint {
+                    constraints: vec![DelayConstraintKind::WireLoadSlope(3.141)]
+                },
+                ""
+            ),
+            (
+                ".wire 1.0 1.5 1.4",
+                DelayConstraint {
+                    constraints: vec![DelayConstraintKind::Wire(vec![1.0, 1.5, 1.4])]
+                },
+                ""
+            ),
+            (
+                ".input_arrival node[1] 10.0 11.0",
+                DelayConstraint {
+                    constraints: vec![DelayConstraintKind::InputArrival(InputArrival {
+                        in_name: "node[1]",
+                        rise: 10.0,
+                        fall: 11.0,
+                        event: None,
+                    })]
+                },
+                ""
+            ),
+            (
+                ".input_arrival node[2] 13.0 12.0 b r'clk1",
+                DelayConstraint {
+                    constraints: vec![DelayConstraintKind::InputArrival(InputArrival {
+                        in_name: "node[2]",
+                        rise: 13.0,
+                        fall: 12.0,
+                        event: Some((BeforeAfter::Before, RiseFall::Rise, "clk1")),
+                    })]
+                },
+                ""
+            ),
+            (
+                ".default_input_arrival 3.2 4.3",
+                DelayConstraint {
+                    constraints: vec![DelayConstraintKind::DefaultInputArrival((3.2, 4.3))]
+                },
+                ""
+            ),
+            (
+                ".output_required sum_out 9.2 9.54",
+                DelayConstraint {
+                    constraints: vec![DelayConstraintKind::OutputRequired(OutputRequired {
+                        out_name: "sum_out",
+                        rise: 9.2,
+                        fall: 9.54,
+                        event: None
+                    })]
+                },
+                ""
+            ),
+            (
+                ".output_required carry(out) 8.55 4.33 a f'clk2",
+                DelayConstraint {
+                    constraints: vec![DelayConstraintKind::OutputRequired(OutputRequired {
+                        out_name: "carry(out)",
+                        rise: 8.55,
+                        fall: 4.33,
+                        event: Some((BeforeAfter::After, RiseFall::Fall, "clk2"))
+                    })]
+                },
+                ""
+            ),
+            (
+                ".default_output_required 5.67 9.45",
+                DelayConstraint {
+                    constraints: vec![DelayConstraintKind::DefaultOutputRequired((5.67, 9.45))]
+                },
+                ""
+            ),
+            (
+                ".input_drive input_a 15 14",
+                DelayConstraint {
+                    constraints: vec![DelayConstraintKind::InputDrive(("input_a", 15.0, 14.0))]
+                },
+                ""
+            ),
+            (
+                ".default_input_drive 22.5 14.25",
+                DelayConstraint {
+                    constraints: vec![DelayConstraintKind::DefaultInputDrive((22.5, 14.25))]
+                },
+                ""
+            ),
+            (
+                ".max_input_load in.a 123.456",
+                DelayConstraint {
+                    constraints: vec![DelayConstraintKind::MaxInputLoad(("in.a", 123.456))]
+                },
+                ""
+            ),
+            (
+                ".default_max_input_load 99",
+                DelayConstraint {
+                    constraints: vec![DelayConstraintKind::DefaultMaxInputLoad(99.0)]
+                },
+                ""
+            ),
+            (
+                ".output_load S 15.67",
+                DelayConstraint {
+                    constraints: vec![DelayConstraintKind::OutputLoad(("S", 15.67))]
+                },
+                ""
+            ),
+            (
+                ".default_output_load 33.33",
+                DelayConstraint {
+                    constraints: vec![DelayConstraintKind::DefaultOutputLoad(33.33)]
+                },
+                ""
+            ),
+        ]
     );
 
     test_parser!(
