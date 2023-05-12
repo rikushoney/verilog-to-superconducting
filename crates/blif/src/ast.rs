@@ -27,8 +27,8 @@ pub enum LatchKind {
 
 #[derive(Clone, Debug, Default, PartialEq)]
 pub enum LogicValue {
-    Zero,
-    One,
+    Zero = 0,
+    One = 1,
     DontCare,
     #[default]
     Unknown,
@@ -82,26 +82,51 @@ pub struct SubfileReference<'a> {
 }
 
 #[derive(Clone, Debug, PartialEq)]
-pub struct FsmDescription {}
-
-#[derive(Clone, Debug, PartialEq)]
-pub enum BeforeAfter {
-    Before,
-    After,
+pub struct StateTransition<'a> {
+    pub inputs: Vec<LogicValue>,
+    pub current_state: &'a str,
+    pub next_state: &'a str,
+    pub outputs: Vec<LogicValue>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
-pub enum RiseFall {
+pub struct FsmDescription<'a> {
+    pub num_inputs: usize,
+    pub num_outputs: usize,
+    pub num_terms: Option<usize>,
+    pub num_states: Option<usize>,
+    pub reset_state: Option<&'a str>,
+    pub state_mapping: Vec<StateTransition<'a>>,
+    pub latch_order: Vec<&'a str>,
+    pub code_mapping: Vec<(&'a str, &'a str)>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct ClockEdgeSkew {
+    pub before: f64,
+    pub after: f64,
+}
+
+impl Default for ClockEdgeSkew {
+    fn default() -> Self {
+        Self {
+            before: 0.0,
+            after: 0.0,
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub enum ClockEdgeKind {
     Rise,
     Fall,
 }
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Event<'a> {
-    pub rise_fall: RiseFall,
+    pub edge: ClockEdgeKind,
     pub clock: &'a str,
-    pub before: f64,
-    pub after: f64,
+    pub skew: ClockEdgeSkew,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -117,7 +142,7 @@ pub struct ClockConstraint<'a> {
 }
 
 #[derive(Clone, Debug, PartialEq)]
-pub enum DelayPhase {
+pub enum DelayPhaseKind {
     Inverting,
     NonInverting,
     Unknown,
@@ -126,7 +151,7 @@ pub enum DelayPhase {
 #[derive(Clone, Debug, PartialEq)]
 pub struct Delay<'a> {
     pub in_name: &'a str,
-    pub phase: DelayPhase,
+    pub phase: DelayPhaseKind,
     pub load: f64,
     pub max_load: f64,
     pub block_rise: f64,
@@ -136,11 +161,24 @@ pub struct Delay<'a> {
 }
 
 #[derive(Clone, Debug, PartialEq)]
+pub enum ClockEventPositionKind {
+    Before,
+    After,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct RelativeEvent<'a> {
+    pub position: ClockEventPositionKind,
+    pub edge: ClockEdgeKind,
+    pub clock: &'a str,
+}
+
+#[derive(Clone, Debug, PartialEq)]
 pub struct InputArrival<'a> {
     pub in_name: &'a str,
     pub rise: f64,
     pub fall: f64,
-    pub event: Option<(BeforeAfter, RiseFall, &'a str)>,
+    pub event: Option<RelativeEvent<'a>>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -148,7 +186,7 @@ pub struct OutputRequired<'a> {
     pub out_name: &'a str,
     pub rise: f64,
     pub fall: f64,
-    pub event: Option<(BeforeAfter, RiseFall, &'a str)>,
+    pub event: Option<RelativeEvent<'a>>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -181,7 +219,7 @@ pub enum Command<'a> {
     LibraryGate(LibraryGate<'a>),
     ModelReference(ModelReference<'a>),
     SubfileReference(SubfileReference<'a>),
-    FsmDescription(FsmDescription),
+    FsmDescription(FsmDescription<'a>),
     ClockConstraint(ClockConstraint<'a>),
     DelayConstraint(DelayConstraint<'a>),
 }

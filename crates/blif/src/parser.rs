@@ -8,7 +8,7 @@ use nom::{
     character::complete::{char, digit0, line_ending, not_line_ending, one_of, satisfy},
     combinator::{map, map_res, opt, recognize, success, value, verify},
     error::{ContextError, FromExternalError, ParseError},
-    multi::{many0_count, many1_count, separated_list1},
+    multi::{many0_count, many1, many1_count, separated_list1},
     number::complete::double,
     sequence::{delimited, pair, preceded, separated_pair, terminated, tuple},
     IResult,
@@ -257,15 +257,50 @@ impl<'a> ModelReference<'a> {
     }
 }
 
-// SubfileReference ::= ".search" S+ Ident
+// SubfileReference ::= ".search" S+ Filename
+// Filename         ::= ("\"" [^"] "\"") | Ident
 impl<'a> SubfileReference<'a> {
     fn parse<E: ParseError<&'a str>>(input: &'a str) -> IResult<&'a str, Self, E> {
+        let filename = |input| {
+            map(
+                alt((
+                    ident,
+                    delimited(
+                        char('"'),
+                        recognize(many0_count(satisfy(|ch| ch != '"'))),
+                        char('"'),
+                    ),
+                )),
+                path::Path::new,
+            )(input)
+        };
         map(
-            preceded(
-                terminated(dot_command("search"), some_space),
-                map(ident, path::Path::new),
-            ),
+            preceded(terminated(dot_command("search"), some_space), filename),
             |filename| Self { filename },
+        )(input)
+    }
+}
+
+// StateTransition ::= LogicValue+ S+ Ident S+ Ident S+ LogicValue+
+impl<'a> StateTransition<'a> {
+    fn parse<
+        E: ParseError<&'a str> + ContextError<&'a str> + FromExternalError<&'a str, ParseIntError>,
+    >(
+        input: &'a str,
+    ) -> IResult<&'a str, Self, E> {
+        map(
+            tuple((
+                terminated(many1(LogicValue::parse), some_space),
+                terminated(ident, some_space),
+                terminated(ident, some_space),
+                many1(LogicValue::parse),
+            )),
+            |(inputs, current_state, next_state, outputs)| StateTransition {
+                inputs,
+                current_state,
+                next_state,
+                outputs,
+            },
         )(input)
     }
 }
@@ -278,25 +313,17 @@ impl<'a> SubfileReference<'a> {
 // NumStates       ::= ".s" S+ PosInt
 // ResetState      ::= ".r" S+ Ident
 // StateMapping    ::= StateTransition (EOL StateTransition)*
-// StateTransition ::= ([01] | DontCare) S+ Ident S+ Ident S+ ([01] | DontCare)
 // FsmEnd          ::= (EOL LatchOrder)? (EOL CodeMapping)?
 // LatchOrder      ::= ".latch_order" S+ LatchOrderList
 // LatchOrderList  ::= Ident (S+ Ident)*
 // CodeMapping     ::= CodeMap (EOL CodeMap)*
 // CodeMap         ::= ".code" S+ Ident S+ Ident
-impl<'a> FsmDescription {
+impl<'a> FsmDescription<'a> {
     fn parse<
         E: ParseError<&'a str> + ContextError<&'a str> + FromExternalError<&'a str, ParseIntError>,
     >(
         input: &'a str,
     ) -> IResult<&'a str, Self, E> {
-        let logic_value = |input| {
-            alt((
-                value(LogicValue::Zero, char('0')),
-                value(LogicValue::One, char('1')),
-                value(LogicValue::DontCare, one_of("-xX")),
-            ))(input)
-        };
         map(
             tuple((
                 delimited(
@@ -318,64 +345,80 @@ impl<'a> FsmDescription {
                     ident,
                 )),
                 terminated(
-                    separated_list1(
-                        end_of_line,
-                        tuple((
-                            terminated(logic_value, some_space),
-                            terminated(ident, some_space),
-                            terminated(ident, some_space),
-                            logic_value,
-                        )),
-                    ),
+                    separated_list1(end_of_line, StateTransition::parse),
                     preceded(end_of_line, dot_command("end_kiss")),
                 ),
-                opt(preceded(
-                    delimited(end_of_line, dot_command("latch_order"), some_space),
-                    separated_list1(some_space, ident),
+                alt((
+                    preceded(
+                        delimited(end_of_line, dot_command("latch_order"), some_space),
+                        separated_list1(some_space, ident),
+                    ),
+                    success(vec![]),
                 )),
-                opt(preceded(
-                    end_of_line,
-                    separated_list1(
+                alt((
+                    preceded(
                         end_of_line,
-                        preceded(
-                            terminated(dot_command("code"), some_space),
-                            pair(terminated(ident, some_space), ident),
+                        separated_list1(
+                            end_of_line,
+                            preceded(
+                                terminated(dot_command("code"), some_space),
+                                pair(terminated(ident, some_space), ident),
+                            ),
                         ),
                     ),
+                    success(vec![]),
                 )),
             )),
             |(
-                _num_inputs,
-                _num_outputs,
-                _num_terms,
-                _num_states,
-                _reset_state,
-                _state_mapping,
-                _latch_order,
-                _code_mapping,
-            )| { Self {} },
+                num_inputs,
+                num_outputs,
+                num_terms,
+                num_states,
+                reset_state,
+                state_mapping,
+                latch_order,
+                code_mapping,
+            )| {
+                Self {
+                    num_inputs,
+                    num_outputs,
+                    num_terms,
+                    num_states,
+                    reset_state,
+                    state_mapping,
+                    latch_order,
+                    code_mapping,
+                }
+            },
         )(input)
     }
 }
 
-fn basic_event<'a, E: ParseError<&'a str>>(
-    input: &'a str,
-) -> IResult<&'a str, (RiseFall, &'a str), E> {
-    pair(
-        terminated(
-            alt((
-                value(RiseFall::Rise, char('r')),
-                value(RiseFall::Fall, char('f')),
+// Event ::= [rf] "'" Ident (S+ Number S+ Number)?
+impl<'a> Event<'a> {
+    fn parse<E: ParseError<&'a str>>(input: &'a str) -> IResult<&'a str, Self, E> {
+        let clock_edge_skew = |input| {
+            map(
+                pair(delimited(some_space, double, some_space), double),
+                |(before, after)| ClockEdgeSkew { before, after },
+            )(input)
+        };
+        map(
+            tuple((
+                alt((
+                    value(ClockEdgeKind::Rise, char('r')),
+                    value(ClockEdgeKind::Fall, char('f')),
+                )),
+                preceded(char('\''), ident),
+                alt((clock_edge_skew, success(ClockEdgeSkew::default()))),
             )),
-            char('\''),
-        ),
-        ident,
-    )(input)
+            |(edge, clock, skew)| Event { edge, clock, skew },
+        )(input)
+    }
 }
 
 // ClockEvent ::= ".clock_event" S+ Number S+ EventsList
 // EventsList ::= Event (S+ Event)*
-// Event      ::= [rf] "'" Ident (S+ Number S+ Number)?
 impl<'a> ClockEvent<'a> {
     fn parse<E: ParseError<&'a str>>(input: &'a str) -> IResult<&'a str, Self, E> {
         map(
@@ -384,27 +427,7 @@ impl<'a> ClockEvent<'a> {
                     terminated(dot_command("clock_event"), some_space),
                     terminated(double, some_space),
                 ),
-                separated_list1(
-                    some_space,
-                    map(
-                        pair(
-                            basic_event,
-                            opt(preceded(
-                                some_space,
-                                pair(terminated(double, some_space), double),
-                            )),
-                        ),
-                        |((rise_fall, clock), before_after)| {
-                            let (before, after) = before_after.unwrap_or((0.0, 0.0));
-                            Event {
-                                rise_fall,
-                                clock,
-                                before,
-                                after,
-                            }
-                        },
-                    ),
-                ),
+                separated_list1(some_space, Event::parse),
             )),
             |(event_percent, events)| Self {
                 event_percent,
@@ -448,9 +471,9 @@ impl<'a> Delay<'a> {
                 ),
                 terminated(
                     alt((
-                        value(DelayPhase::Inverting, tag("INV")),
-                        value(DelayPhase::NonInverting, tag("NONINV")),
-                        value(DelayPhase::Unknown, tag("UNKNOWN")),
+                        value(DelayPhaseKind::Inverting, tag("INV")),
+                        value(DelayPhaseKind::NonInverting, tag("NONINV")),
+                        value(DelayPhaseKind::Unknown, tag("UNKNOWN")),
                     )),
                     some_space,
                 ),
@@ -477,26 +500,37 @@ impl<'a> Delay<'a> {
     }
 }
 
-fn before_after_event<'a, E: ParseError<&'a str>>(
-    input: &'a str,
-) -> IResult<&'a str, (BeforeAfter, RiseFall, &'a str), E> {
-    map(
-        pair(
-            terminated(
-                alt((
-                    value(BeforeAfter::Before, char('b')),
-                    value(BeforeAfter::After, char('a')),
-                )),
-                some_space,
-            ),
-            basic_event,
-        ),
-        |(before_after, (rise_fall, clock))| (before_after, rise_fall, clock),
-    )(input)
+// RelativeEvent ::= [ba] S+ [rf] "'" Ident
+impl<'a> RelativeEvent<'a> {
+    fn parse<E: ParseError<&'a str>>(input: &'a str) -> IResult<&'a str, Self, E> {
+        map(
+            tuple((
+                terminated(
+                    alt((
+                        value(ClockEventPositionKind::Before, char('b')),
+                        value(ClockEventPositionKind::After, char('a')),
+                    )),
+                    some_space,
+                ),
+                terminated(
+                    alt((
+                        value(ClockEdgeKind::Rise, char('r')),
+                        value(ClockEdgeKind::Fall, char('f')),
+                    )),
+                    char('\''),
+                ),
+                ident,
+            )),
+            |(position, edge, clock)| RelativeEvent {
+                position,
+                edge,
+                clock,
+            },
+        )(input)
+    }
 }
 
-// InputArrival ::= ".input_arrival" S+ Ident S+ Number S+ Number (S+ BeforeAfter S+ Event)?
-// BeforeAfter  ::= [ba]
+// InputArrival ::= ".input_arrival" S+ Ident S+ Number S+ Number (S+ RelativeEvent)?
 impl<'a> InputArrival<'a> {
     fn parse<E: ParseError<&'a str>>(input: &'a str) -> IResult<&'a str, Self, E> {
         map(
@@ -508,7 +542,7 @@ impl<'a> InputArrival<'a> {
                 ),
                 terminated(double, some_space),
                 double,
-                opt(preceded(some_space, before_after_event)),
+                opt(preceded(some_space, RelativeEvent::parse)),
             )),
             |(in_name, rise, fall, event)| Self {
                 in_name,
@@ -520,7 +554,7 @@ impl<'a> InputArrival<'a> {
     }
 }
 
-// OutputRequired ::= ".output_required" S+ Ident S+ Number S+ Number (S+ BeforeAfter S+ Event)?
+// OutputRequired ::= ".output_required" S+ Ident S+ Number S+ Number (S+ RelativeEvent)?
 impl<'a> OutputRequired<'a> {
     fn parse<E: ParseError<&'a str>>(input: &'a str) -> IResult<&'a str, Self, E> {
         map(
@@ -532,7 +566,7 @@ impl<'a> OutputRequired<'a> {
                 ),
                 terminated(double, some_space),
                 double,
-                opt(preceded(some_space, before_after_event)),
+                opt(preceded(some_space, RelativeEvent::parse)),
             )),
             |(out_name, rise, fall, event)| Self {
                 out_name,
@@ -1104,26 +1138,32 @@ e
                         event_percent: 50.0,
                         events: vec![
                             Event {
-                                rise_fall: RiseFall::Rise,
+                                edge: ClockEdgeKind::Rise,
                                 clock: "clk1",
-                                before: 0.0,
-                                after: 0.0,
+                                skew: ClockEdgeSkew {
+                                    before: 0.0,
+                                    after: 0.0,
+                                }
                             },
                             Event {
-                                rise_fall: RiseFall::Fall,
+                                edge: ClockEdgeKind::Fall,
                                 clock: "clk2",
-                                before: 0.0,
-                                after: 0.0
+                                skew: ClockEdgeSkew {
+                                    before: 0.0,
+                                    after: 0.0
+                                }
                             }
                         ]
                     },
                     ClockEvent {
                         event_percent: 75.0,
                         events: vec![Event {
-                            rise_fall: RiseFall::Fall,
+                            edge: ClockEdgeKind::Fall,
                             clock: "global",
-                            before: 1.0,
-                            after: 1.0
+                            skew: ClockEdgeSkew {
+                                before: 1.0,
+                                after: 1.0
+                            }
                         },]
                     }
                 ]
@@ -1148,7 +1188,7 @@ e
                 DelayConstraint {
                     constraints: vec![DelayConstraintKind::Delay(Delay {
                         in_name: "input_a",
-                        phase: DelayPhase::Inverting,
+                        phase: DelayPhaseKind::Inverting,
                         load: 5.0,
                         max_load: 10.0,
                         block_rise: 2.5,
@@ -1192,7 +1232,11 @@ e
                         in_name: "node[2]",
                         rise: 13.0,
                         fall: 12.0,
-                        event: Some((BeforeAfter::Before, RiseFall::Rise, "clk1")),
+                        event: Some(RelativeEvent {
+                            position: ClockEventPositionKind::Before,
+                            edge: ClockEdgeKind::Rise,
+                            clock: "clk1"
+                        }),
                     })]
                 },
                 ""
@@ -1223,7 +1267,11 @@ e
                         out_name: "carry(out)",
                         rise: 8.55,
                         fall: 4.33,
-                        event: Some((BeforeAfter::After, RiseFall::Fall, "clk2"))
+                        event: Some(RelativeEvent {
+                            position: ClockEventPositionKind::After,
+                            edge: ClockEdgeKind::Fall,
+                            clock: "clk2"
+                        })
                     })]
                 },
                 ""

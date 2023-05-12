@@ -43,7 +43,8 @@ FormalActualList    ::= Ident "=" Ident (S+ Ident "=" Ident)*
 
 ModelReference      ::= ".subckt" S+ Ident S+ FormalActualList
 
-SubfileReference    ::= ".search" S+ Ident
+SubfileReference    ::= ".search" S+ Filename
+Filename            ::= ("\"" [^"] "\"") | Ident
 
 FsmDescription      ::= ".start_kiss" EOL FsmFields EOL StateMapping EOL ".end_kiss" FsmEnd
 FsmFields           ::= NumInputs EOL NumOutputs (EOL NumTerms)? (EOL NumStates)? (EOL ResetState)?
@@ -89,10 +90,10 @@ Phase               ::= "INV" | "NONINV" | "UNKNOWN"
 WireLoadSlope       ::= ".wire_load_slope" S+ Number
 Wire                ::= ".wire" S+ WireLoadList
 WireLoadList        ::= Number (S+ Number)*
-InputArrival        ::= ".input_arrival" S+ Ident S+ Number S+ Number (S+ BeforeAfter S+ Event)?
-BeforeAfter         ::= [ba]
+InputArrival        ::= ".input_arrival" S+ Ident S+ Number S+ Number (S+ RelativeEvent)?
+RelativeEvent       ::= [ba] S+ [rf] "'" Ident
 DefInputArrival     ::= ".default_input_arrival" S+ Number S+ Number
-OutputRequired      ::= ".output_required" S+ Ident S+ Number S+ Number (S+ BeforeAfter S+ Event)?
+OutputRequired      ::= ".output_required" S+ Ident S+ Number S+ Number (S+ RelativeEvent)?
 DefOutputRequired   ::= ".default_output_required" S+ Number S+ Number
 InputDrive          ::= ".input_drive" S+ Ident S+ Number S+ Number
 DefInputDrive       ::= ".default_input_drive" S+ Number S+ Number
