@@ -1,4 +1,4 @@
-# Syntax rules for BLIF file format
+# Syntax rules for the BLIF file format
 
 The BLIF file format's syntax is described below using Extended Backus-Naur Form (EBNF) notation.
 
@@ -9,7 +9,7 @@ Model               ::= ".model" (S+ Ident)? EOL ModelFields EOL Commands (EOL "
 ModelFields         ::= ModelField (EOL ModelField)*
 Commands            ::= Command (EOL Command)*
 
-ModelField          ::= (InputsList | OutputsList | ClockList)
+ModelField          ::= InputsList | OutputsList | ClockList
 InputsList          ::= ".inputs" S+ SignalList
 OutputsList         ::= ".outputs" S+ SignalList
 ClockList           ::= ".clock" S+ SignalList
@@ -25,16 +25,15 @@ Command             ::= LogicGate        |
                         DelayConstraint
 
 LogicGate           ::= (".exdc" EOL)? ".names" S+ SignalList EOL SingleOutputCover
-SingleOutputCover   ::= SingleOutput (EOL SingleOutputCover)*
-SingleOutput        ::= InputPlane+ OutputPlane
-InputPlane          ::= [01] | DontCare
-DontCare            ::= [xX] | "-"
+SingleOutputCover   ::= SingleOutput (EOL SingleOutput)*
+SingleOutput        ::= InputPlane+ S+ OutputPlane
+InputPlane          ::= [01] | "-"
 OutputPlane         ::= [01]
 
 GenericLatch        ::= ".latch" S+ Ident S+ Ident S+ LatchKind S+ LatchControl (S+ LogicValue)?
 LatchKind           ::= "fe" | "re" | "ah" | "al" | "as"
 LatchControl        ::= Ident | "NIL"
-LogicValue          ::= [0-3] | DontCare
+LogicValue          ::= [0-3]
 
 LibraryGate         ::= GateTechnology | LatchTechnology
 GateTechnology      ::= ".gate" S+ Ident S+ FormalActualList

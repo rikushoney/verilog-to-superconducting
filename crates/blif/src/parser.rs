@@ -19,7 +19,6 @@ use std::path;
 
 // Ident ::= ([^#=] - S)+
 fn ident<'a, E: ParseError<&'a str>>(input: &'a str) -> IResult<&'a str, &'a str, E> {
-    // identifiers can be anything except whitespace, '#' or '='
     recognize(many1_count(satisfy(|ch| {
         !ch.is_whitespace() && "#=".chars().all(|illegal| ch != illegal)
     })))(input)
@@ -67,25 +66,32 @@ fn positive_integer<'a, E: ParseError<&'a str> + FromExternalError<&'a str, Pars
     verify(map_res(digit0, |int: &'a str| int.parse()), |int| *int != 0)(input)
 }
 
-// SingleOutput ::= InputPlane+ OutputPlane
-impl<'a> SingleOutput<'a> {
+// SingleOutput ::= InputPlane+ S+ OutputPlane
+impl<'a> SingleOutput {
     fn parse<E: ParseError<&'a str> + ContextError<&'a str>>(
         input: &'a str,
     ) -> IResult<&'a str, Self, E> {
-        let input_plane = alt((char('0'), char('1'), char('-')));
-        let output_plane = alt((char('0'), char('1')));
+        let input_plane = |input| {
+            alt((
+                value(LogicValue::Zero, char('0')),
+                value(LogicValue::One, char('1')),
+                value(LogicValue::DontCare, char('-')),
+            ))(input)
+        };
+        let output_plane = |input| {
+            alt((
+                value(LogicValue::Zero, char('0')),
+                value(LogicValue::One, char('1')),
+            ))(input)
+        };
         map(
-            separated_pair(
-                recognize(many1_count(input_plane)),
-                some_space,
-                output_plane,
-            ),
+            separated_pair(many1(input_plane), some_space, output_plane),
             |(inputs, output)| Self { inputs, output },
         )(input)
     }
 }
 
-// SingleOutputCover ::= InputPlane+ OutputPlane (EOL InputPlane+ OutputPlane)*
+// SingleOutputCover ::= SingleOutput (EOL SingleOutput)*
 fn single_output_cover<'a, E: ParseError<&'a str> + ContextError<&'a str>>(
     input: &'a str,
 ) -> IResult<&'a str, Vec<SingleOutput>, E> {
@@ -137,13 +143,13 @@ impl<'a> LatchKind {
     }
 }
 
-// LogicValue ::= [0-3] | DontCare
+// LogicValue ::= [0-3]
 impl<'a> LogicValue {
     fn parse<E: ParseError<&'a str>>(input: &'a str) -> IResult<&'a str, Self, E> {
         alt((
             value(LogicValue::Zero, char('0')),
             value(LogicValue::One, char('1')),
-            value(LogicValue::DontCare, one_of("2-xX")),
+            value(LogicValue::DontCare, char('2')),
             value(LogicValue::Unknown, char('3')),
         ))(input)
     }
@@ -634,7 +640,7 @@ impl<'a> DelayConstraintKind<'a> {
                     ),
                     double,
                 ),
-                DelayConstraintKind::DefaultInputArrival,
+                |(rise, fall)| DelayConstraintKind::DefaultInputArrival { rise, fall },
             )(input)
         };
         // DefOutputRequired ::= ".default_output_required" S+ Number S+ Number
@@ -647,7 +653,7 @@ impl<'a> DelayConstraintKind<'a> {
                     ),
                     double,
                 ),
-                DelayConstraintKind::DefaultOutputRequired,
+                |(rise, fall)| DelayConstraintKind::DefaultOutputRequired { rise, fall },
             )(input)
         };
         // InputDrive ::= ".input_drive" S+ Ident S+ Number S+ Number
@@ -661,7 +667,11 @@ impl<'a> DelayConstraintKind<'a> {
                     terminated(double, some_space),
                     double,
                 )),
-                DelayConstraintKind::InputDrive,
+                |(in_name, rise, fall)| DelayConstraintKind::InputDrive {
+                    in_name,
+                    rise,
+                    fall,
+                },
             )(input)
         };
         // DefInputDrive ::= ".default_input_drive" S+ Number S+ Number
@@ -674,7 +684,7 @@ impl<'a> DelayConstraintKind<'a> {
                     ),
                     double,
                 ),
-                DelayConstraintKind::DefaultInputDrive,
+                |(rise, fall)| DelayConstraintKind::DefaultInputDrive { rise, fall },
             )(input)
         };
         // MaxInputLoad ::= ".max_input_load" S+ Ident S+ Number
@@ -687,7 +697,7 @@ impl<'a> DelayConstraintKind<'a> {
                     ),
                     double,
                 ),
-                DelayConstraintKind::MaxInputLoad,
+                |(in_name, load)| DelayConstraintKind::MaxInputLoad { in_name, load },
             )(input)
         };
         // DefMaxInputLoad ::= ".default_max_input_load" S+ Number
@@ -710,7 +720,7 @@ impl<'a> DelayConstraintKind<'a> {
                     ),
                     double,
                 ),
-                DelayConstraintKind::OutputLoad,
+                |(out_name, load)| DelayConstraintKind::OutputLoad { out_name, load },
             )(input)
         };
         // DefOutputLoad ::= ".default_output_load" S+ Number
@@ -946,32 +956,52 @@ mod tests {
             (
                 "10-1 0\n",
                 SingleOutput {
-                    inputs: "10-1",
-                    output: '0',
+                    inputs: vec![
+                        LogicValue::One,
+                        LogicValue::Zero,
+                        LogicValue::DontCare,
+                        LogicValue::One
+                    ],
+                    output: LogicValue::Zero,
                 },
                 "\n",
             ),
             (
                 "-111 0\n",
                 SingleOutput {
-                    inputs: "-111",
-                    output: '0',
+                    inputs: vec![
+                        LogicValue::DontCare,
+                        LogicValue::One,
+                        LogicValue::One,
+                        LogicValue::One
+                    ],
+                    output: LogicValue::Zero
                 },
                 "\n",
             ),
             (
                 "0-11 1\n",
                 SingleOutput {
-                    inputs: "0-11",
-                    output: '1',
+                    inputs: vec![
+                        LogicValue::Zero,
+                        LogicValue::DontCare,
+                        LogicValue::One,
+                        LogicValue::One
+                    ],
+                    output: LogicValue::One
                 },
                 "\n",
             ),
             (
                 "0-11 1\n# a comment\n",
                 SingleOutput {
-                    inputs: "0-11",
-                    output: '1',
+                    inputs: vec![
+                        LogicValue::Zero,
+                        LogicValue::DontCare,
+                        LogicValue::One,
+                        LogicValue::One
+                    ],
+                    output: LogicValue::One
                 },
                 "\n# a comment\n",
             ),
@@ -994,16 +1024,20 @@ mod tests {
                     output: "d",
                     pla_description: vec![
                         SingleOutput {
-                            inputs: "00-",
-                            output: '0',
+                            inputs: vec![LogicValue::Zero, LogicValue::Zero, LogicValue::DontCare],
+                            output: LogicValue::Zero,
                         },
                         SingleOutput {
-                            inputs: "1-0",
-                            output: '1',
+                            inputs: vec![LogicValue::One, LogicValue::DontCare, LogicValue::Zero],
+                            output: LogicValue::One,
                         },
                         SingleOutput {
-                            inputs: "--1",
-                            output: '1',
+                            inputs: vec![
+                                LogicValue::DontCare,
+                                LogicValue::DontCare,
+                                LogicValue::One,
+                            ],
+                            output: LogicValue::One,
                         },
                     ],
                 },
@@ -1023,16 +1057,20 @@ e
                     output: "e",
                     pla_description: vec![
                         SingleOutput {
-                            inputs: "0-1",
-                            output: '1',
+                            inputs: vec![LogicValue::Zero, LogicValue::DontCare, LogicValue::One],
+                            output: LogicValue::One,
                         },
                         SingleOutput {
-                            inputs: "--0",
-                            output: '1',
+                            inputs: vec![
+                                LogicValue::DontCare,
+                                LogicValue::DontCare,
+                                LogicValue::Zero
+                            ],
+                            output: LogicValue::One,
                         },
                         SingleOutput {
-                            inputs: "-01",
-                            output: '1',
+                            inputs: vec![LogicValue::DontCare, LogicValue::Zero, LogicValue::One,],
+                            output: LogicValue::One,
                         },
                     ],
                 },
@@ -1244,7 +1282,10 @@ e
             (
                 ".default_input_arrival 3.2 4.3",
                 DelayConstraint {
-                    constraints: vec![DelayConstraintKind::DefaultInputArrival((3.2, 4.3))]
+                    constraints: vec![DelayConstraintKind::DefaultInputArrival {
+                        rise: 3.2,
+                        fall: 4.3
+                    }]
                 },
                 ""
             ),
@@ -1279,28 +1320,41 @@ e
             (
                 ".default_output_required 5.67 9.45",
                 DelayConstraint {
-                    constraints: vec![DelayConstraintKind::DefaultOutputRequired((5.67, 9.45))]
+                    constraints: vec![DelayConstraintKind::DefaultOutputRequired {
+                        rise: 5.67,
+                        fall: 9.45
+                    }]
                 },
                 ""
             ),
             (
                 ".input_drive input_a 15 14",
                 DelayConstraint {
-                    constraints: vec![DelayConstraintKind::InputDrive(("input_a", 15.0, 14.0))]
+                    constraints: vec![DelayConstraintKind::InputDrive {
+                        in_name: "input_a",
+                        rise: 15.0,
+                        fall: 14.0
+                    }]
                 },
                 ""
             ),
             (
                 ".default_input_drive 22.5 14.25",
                 DelayConstraint {
-                    constraints: vec![DelayConstraintKind::DefaultInputDrive((22.5, 14.25))]
+                    constraints: vec![DelayConstraintKind::DefaultInputDrive {
+                        rise: 22.5,
+                        fall: 14.25
+                    }]
                 },
                 ""
             ),
             (
                 ".max_input_load in.a 123.456",
                 DelayConstraint {
-                    constraints: vec![DelayConstraintKind::MaxInputLoad(("in.a", 123.456))]
+                    constraints: vec![DelayConstraintKind::MaxInputLoad {
+                        in_name: "in.a",
+                        load: 123.456
+                    }]
                 },
                 ""
             ),
@@ -1314,7 +1368,10 @@ e
             (
                 ".output_load S 15.67",
                 DelayConstraint {
-                    constraints: vec![DelayConstraintKind::OutputLoad(("S", 15.67))]
+                    constraints: vec![DelayConstraintKind::OutputLoad {
+                        out_name: "S",
+                        load: 15.67
+                    }]
                 },
                 ""
             ),
@@ -1353,16 +1410,24 @@ e
                         output: "d",
                         pla_description: vec![
                             SingleOutput {
-                                inputs: "000",
-                                output: '0',
+                                inputs: vec![LogicValue::Zero, LogicValue::Zero, LogicValue::Zero,],
+                                output: LogicValue::Zero,
                             },
                             SingleOutput {
-                                inputs: "-1-",
-                                output: '1',
+                                inputs: vec![
+                                    LogicValue::DontCare,
+                                    LogicValue::One,
+                                    LogicValue::DontCare,
+                                ],
+                                output: LogicValue::One,
                             },
                             SingleOutput {
-                                inputs: "0-0",
-                                output: '0',
+                                inputs: vec![
+                                    LogicValue::Zero,
+                                    LogicValue::DontCare,
+                                    LogicValue::Zero
+                                ],
+                                output: LogicValue::Zero,
                             },
                         ],
                     })],
@@ -1394,16 +1459,28 @@ e
                         output: "d",
                         pla_description: vec![
                             SingleOutput {
-                                inputs: "1-0",
-                                output: '1',
+                                inputs: vec![
+                                    LogicValue::One,
+                                    LogicValue::DontCare,
+                                    LogicValue::Zero,
+                                ],
+                                output: LogicValue::One,
                             },
                             SingleOutput {
-                                inputs: "-01",
-                                output: '0',
+                                inputs: vec![
+                                    LogicValue::DontCare,
+                                    LogicValue::Zero,
+                                    LogicValue::One,
+                                ],
+                                output: LogicValue::Zero,
                             },
                             SingleOutput {
-                                inputs: "-1-",
-                                output: '0',
+                                inputs: vec![
+                                    LogicValue::DontCare,
+                                    LogicValue::One,
+                                    LogicValue::DontCare
+                                ],
+                                output: LogicValue::Zero,
                             },
                         ],
                     })],
@@ -1497,8 +1574,8 @@ e
                             inputs: vec!["XX"],
                             output: "S1",
                             pla_description: vec![SingleOutput {
-                                inputs: "1",
-                                output: '1'
+                                inputs: vec![LogicValue::One],
+                                output: LogicValue::One
                             },]
                         }),
                         Command::LogicGate(LogicGate {
@@ -1506,8 +1583,8 @@ e
                             inputs: vec!["A2"],
                             output: "JJ",
                             pla_description: vec![SingleOutput {
-                                inputs: "1",
-                                output: '1'
+                                inputs: vec![LogicValue::One],
+                                output: LogicValue::One
                             },]
                         })
                     ]

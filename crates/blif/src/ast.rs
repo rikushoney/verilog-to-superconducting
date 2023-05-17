@@ -3,9 +3,9 @@
 use std::path;
 
 #[derive(Clone, Debug, PartialEq)]
-pub struct SingleOutput<'a> {
-    pub inputs: &'a str,
-    pub output: char,
+pub struct SingleOutput {
+    pub inputs: Vec<LogicValue>,
+    pub output: LogicValue,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -13,7 +13,7 @@ pub struct LogicGate<'a> {
     pub exdc: bool,
     pub inputs: Vec<&'a str>,
     pub output: &'a str,
-    pub pla_description: Vec<SingleOutput<'a>>,
+    pub pla_description: Vec<SingleOutput>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -196,14 +196,33 @@ pub enum DelayConstraintKind<'a> {
     WireLoadSlope(f64),
     Wire(Vec<f64>),
     InputArrival(InputArrival<'a>),
-    DefaultInputArrival((f64, f64)),
+    DefaultInputArrival {
+        rise: f64,
+        fall: f64,
+    },
     OutputRequired(OutputRequired<'a>),
-    DefaultOutputRequired((f64, f64)),
-    InputDrive((&'a str, f64, f64)),
-    DefaultInputDrive((f64, f64)),
-    MaxInputLoad((&'a str, f64)),
+    DefaultOutputRequired {
+        rise: f64,
+        fall: f64,
+    },
+    InputDrive {
+        in_name: &'a str,
+        rise: f64,
+        fall: f64,
+    },
+    DefaultInputDrive {
+        rise: f64,
+        fall: f64,
+    },
+    MaxInputLoad {
+        in_name: &'a str,
+        load: f64,
+    },
     DefaultMaxInputLoad(f64),
-    OutputLoad((&'a str, f64)),
+    OutputLoad {
+        out_name: &'a str,
+        load: f64,
+    },
     DefaultOutputLoad(f64),
 }
 
