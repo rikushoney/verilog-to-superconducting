@@ -513,8 +513,8 @@ impl<'a> RelativeEvent<'a> {
             tuple((
                 terminated(
                     alt((
-                        value(ClockEventPositionKind::Before, char('b')),
-                        value(ClockEventPositionKind::After, char('a')),
+                        value(ClockEventPosition::Before, char('b')),
+                        value(ClockEventPosition::After, char('a')),
                     )),
                     some_space,
                 ),
@@ -606,7 +606,7 @@ impl<'a> DelayConstraintKind<'a> {
         let area = |input| {
             map(
                 preceded(terminated(dot_command("area"), some_space), double),
-                DelayConstraintKind::Area,
+                |area| DelayConstraintKind::Area { area },
             )(input)
         };
         // WireLoadSlope ::= ".wire_load_slope" S+ Number
@@ -616,7 +616,7 @@ impl<'a> DelayConstraintKind<'a> {
                     terminated(dot_command("wire_load_slope"), some_space),
                     double,
                 ),
-                DelayConstraintKind::WireLoadSlope,
+                |load| DelayConstraintKind::WireLoadSlope { load },
             )(input)
         };
         // Wire         ::= ".wire" S+ WireLoadList
@@ -627,7 +627,7 @@ impl<'a> DelayConstraintKind<'a> {
                     terminated(dot_command("wire"), some_space),
                     separated_list1(some_space, double),
                 ),
-                DelayConstraintKind::Wire,
+                |loads| DelayConstraintKind::Wire { loads },
             )(input)
         };
         // DefInputArrival ::= ".default_input_arrival" S+ Number S+ Number
@@ -707,7 +707,7 @@ impl<'a> DelayConstraintKind<'a> {
                     terminated(dot_command("default_max_input_load"), some_space),
                     double,
                 ),
-                DelayConstraintKind::DefaultMaxInputLoad,
+                |load| DelayConstraintKind::DefaultMaxInputLoad { load },
             )(input)
         };
         // OutputLoad ::= ".output_load" S+ Ident S+ Number
@@ -730,7 +730,7 @@ impl<'a> DelayConstraintKind<'a> {
                     terminated(dot_command("default_output_load"), some_space),
                     double,
                 ),
-                DelayConstraintKind::DefaultOutputLoad,
+                |load| DelayConstraintKind::DefaultOutputLoad { load },
             )(input)
         };
         alt((
@@ -1217,7 +1217,7 @@ e
             (
                 ".area 10",
                 DelayConstraint {
-                    constraints: vec![DelayConstraintKind::Area(10.0)]
+                    constraints: vec![DelayConstraintKind::Area { area: 10.0 }]
                 },
                 ""
             ),
@@ -1240,14 +1240,16 @@ e
             (
                 ".wire_load_slope 3.141",
                 DelayConstraint {
-                    constraints: vec![DelayConstraintKind::WireLoadSlope(3.141)]
+                    constraints: vec![DelayConstraintKind::WireLoadSlope { load: 3.141 }]
                 },
                 ""
             ),
             (
                 ".wire 1.0 1.5 1.4",
                 DelayConstraint {
-                    constraints: vec![DelayConstraintKind::Wire(vec![1.0, 1.5, 1.4])]
+                    constraints: vec![DelayConstraintKind::Wire {
+                        loads: vec![1.0, 1.5, 1.4]
+                    }]
                 },
                 ""
             ),
@@ -1271,7 +1273,7 @@ e
                         rise: 13.0,
                         fall: 12.0,
                         event: Some(RelativeEvent {
-                            position: ClockEventPositionKind::Before,
+                            position: ClockEventPosition::Before,
                             edge: ClockEdgeKind::Rise,
                             clock: "clk1"
                         }),
@@ -1309,7 +1311,7 @@ e
                         rise: 8.55,
                         fall: 4.33,
                         event: Some(RelativeEvent {
-                            position: ClockEventPositionKind::After,
+                            position: ClockEventPosition::After,
                             edge: ClockEdgeKind::Fall,
                             clock: "clk2"
                         })
@@ -1361,7 +1363,7 @@ e
             (
                 ".default_max_input_load 99",
                 DelayConstraint {
-                    constraints: vec![DelayConstraintKind::DefaultMaxInputLoad(99.0)]
+                    constraints: vec![DelayConstraintKind::DefaultMaxInputLoad { load: 99.0 }]
                 },
                 ""
             ),
@@ -1378,7 +1380,7 @@ e
             (
                 ".default_output_load 33.33",
                 DelayConstraint {
-                    constraints: vec![DelayConstraintKind::DefaultOutputLoad(33.33)]
+                    constraints: vec![DelayConstraintKind::DefaultOutputLoad { load: 33.33 }]
                 },
                 ""
             ),

@@ -161,14 +161,14 @@ pub struct Delay<'a> {
 }
 
 #[derive(Clone, Debug, PartialEq)]
-pub enum ClockEventPositionKind {
+pub enum ClockEventPosition {
     Before,
     After,
 }
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct RelativeEvent<'a> {
-    pub position: ClockEventPositionKind,
+    pub position: ClockEventPosition,
     pub edge: ClockEdgeKind,
     pub clock: &'a str,
 }
@@ -191,10 +191,16 @@ pub struct OutputRequired<'a> {
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum DelayConstraintKind<'a> {
-    Area(f64),
+    Area {
+        area: f64,
+    },
     Delay(Delay<'a>),
-    WireLoadSlope(f64),
-    Wire(Vec<f64>),
+    WireLoadSlope {
+        load: f64,
+    },
+    Wire {
+        loads: Vec<f64>,
+    },
     InputArrival(InputArrival<'a>),
     DefaultInputArrival {
         rise: f64,
@@ -218,12 +224,16 @@ pub enum DelayConstraintKind<'a> {
         in_name: &'a str,
         load: f64,
     },
-    DefaultMaxInputLoad(f64),
+    DefaultMaxInputLoad {
+        load: f64,
+    },
     OutputLoad {
         out_name: &'a str,
         load: f64,
     },
-    DefaultOutputLoad(f64),
+    DefaultOutputLoad {
+        load: f64,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq)]
