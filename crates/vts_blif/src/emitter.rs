@@ -111,7 +111,7 @@ impl<W: Write> Emitter<W> {
             ast::LibraryTechnology::Gate => ".gate",
             ast::LibraryTechnology::Latch(_) => ".mlatch",
         };
-        write!(self.sink, "{} ", library_gate.name)?;
+        write!(self.sink, "{} {} ", command, library_gate.name)?;
         self.emit_formal_actual(&library_gate.formal_actual)?;
         match library_gate.technology {
             ast::LibraryTechnology::Gate => (),
