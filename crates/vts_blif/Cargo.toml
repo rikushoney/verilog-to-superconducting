@@ -4,5 +4,7 @@ version = "0.0.0"
 edition = "2021"
 
 [dependencies]
-nom = "7.1.3"
-unicode-ident = "1.0.8"
+nom = "7"
+nom_locate = "4"
+serde = "1"
+unicode-ident = "1"
