@@ -8,18 +8,30 @@ pub struct Emitter<W: Write> {
     sink: W,
 }
 
+enum LogicValueStyle {
+    Numeric,
+    Symbolic,
+}
+
 impl<W: Write> Emitter<W> {
     pub fn new(sink: W) -> Self {
         Self { sink }
     }
 
+    fn emit_space(&mut self) -> io::Result<()> {
+        write!(self.sink, " ")
+    }
+
+    fn emit_newline(&mut self) -> io::Result<()> {
+        write!(self.sink, "\n")
+    }
+
     fn emit_single_output(&mut self, single_output: &ast::SingleOutput) -> io::Result<()> {
         for logic_value in &single_output.inputs {
-            self.emit_logic_value(&logic_value, false)?;
+            self.emit_logic_value(&logic_value, LogicValueStyle::Symbolic)?;
         }
-        write!(self.sink, " ")?;
-        self.emit_logic_value(&single_output.output, false)?;
-        write!(self.sink, "\n")
+        self.emit_space()?;
+        self.emit_logic_value(&single_output.output, LogicValueStyle::Symbolic)
     }
 
     fn emit_logic_gate(&mut self, logic_gate: &ast::LogicGate) -> io::Result<()> {
@@ -34,6 +46,7 @@ impl<W: Write> Emitter<W> {
         )?;
         for single_output in &logic_gate.pla_description {
             self.emit_single_output(&single_output)?;
+            self.emit_newline()?;
         }
         Ok(())
     }
@@ -48,11 +61,22 @@ impl<W: Write> Emitter<W> {
         }
     }
 
-    fn emit_logic_value(&mut self, logic_value: &ast::LogicValue, numeric: bool) -> io::Result<()> {
+    fn emit_logic_value(
+        &mut self,
+        logic_value: &ast::LogicValue,
+        style: LogicValueStyle,
+    ) -> io::Result<()> {
         match logic_value {
             ast::LogicValue::Zero => write!(self.sink, "0"),
             ast::LogicValue::One => write!(self.sink, "1"),
-            ast::LogicValue::DontCare => write!(self.sink, "{}", if numeric { "2" } else { "-" }),
+            ast::LogicValue::DontCare => write!(
+                self.sink,
+                "{}",
+                match style {
+                    LogicValueStyle::Numeric => "2",
+                    LogicValueStyle::Symbolic => "-",
+                }
+            ),
             ast::LogicValue::Unknown => write!(self.sink, "3"),
         }
     }
@@ -71,17 +95,17 @@ impl<W: Write> Emitter<W> {
             generic_latch.input, generic_latch.output
         )?;
         self.emit_latch_kind(&generic_latch.kind)?;
-        write!(self.sink, " ")?;
+        self.emit_space()?;
         self.emit_latch_control(&generic_latch.control)?;
-        write!(self.sink, " ")?;
-        self.emit_logic_value(&generic_latch.init, true)
+        self.emit_space()?;
+        self.emit_logic_value(&generic_latch.init, LogicValueStyle::Numeric)
     }
 
     fn emit_library_latch(&mut self, library_latch: &ast::LibraryLatch) -> io::Result<()> {
-        write!(self.sink, " ")?;
+        self.emit_space()?;
         self.emit_latch_control(&library_latch.control)?;
-        write!(self.sink, " ")?;
-        self.emit_logic_value(&library_latch.init, true)
+        self.emit_space()?;
+        self.emit_logic_value(&library_latch.init, LogicValueStyle::Numeric)
     }
 
     fn emit_library_technology(
@@ -136,124 +160,6 @@ impl<W: Write> Emitter<W> {
         )
     }
 
-    fn emit_state_transition(&mut self, state_transition: &ast::StateTransition) -> io::Result<()> {
-        unimplemented!()
-    }
-
-    fn emit_fsm_description(&mut self, fsm_description: &ast::FsmDescription) -> io::Result<()> {
-        unimplemented!()
-    }
-
-    fn emit_clock_edge_skew(&mut self, clock_edge_skew: &ast::ClockEdgeSkew) -> io::Result<()> {
-        unimplemented!()
-    }
-
-    fn emit_clock_edge_kind(&mut self, clock_edge_kind: &ast::ClockEdgeKind) -> io::Result<()> {
-        unimplemented!()
-    }
-
-    fn emit_event(&mut self, event: &ast::Event) -> io::Result<()> {
-        unimplemented!()
-    }
-
-    fn emit_clock_event(&mut self, clock_event: &ast::ClockEvent) -> io::Result<()> {
-        unimplemented!()
-    }
-
-    fn emit_clock_constraint(&mut self, clock_constraint: &ast::ClockConstraint) -> io::Result<()> {
-        unimplemented!()
-    }
-
-    fn emit_delay_phase_kind(&mut self, delay_phase_kind: &ast::DelayPhaseKind) -> io::Result<()> {
-        unimplemented!()
-    }
-
-    fn emit_delay(&mut self, delay: &ast::Delay) -> io::Result<()> {
-        unimplemented!()
-    }
-
-    fn emit_clock_event_position(
-        &mut self,
-        clock_event_position: &ast::ClockEventPosition,
-    ) -> io::Result<()> {
-        unimplemented!()
-    }
-
-    fn emit_relative_event(&mut self, relative_event: &ast::RelativeEvent) -> io::Result<()> {
-        unimplemented!()
-    }
-
-    fn emit_input_arrival(&mut self, input_arrival: &ast::InputArrival) -> io::Result<()> {
-        unimplemented!()
-    }
-
-    fn emit_output_required(&mut self, output_required: &ast::OutputRequired) -> io::Result<()> {
-        unimplemented!()
-    }
-
-    fn emit_delay_constraint_kind(
-        &mut self,
-        delay_constraint_kind: &ast::DelayConstraintKind,
-    ) -> io::Result<()> {
-        match delay_constraint_kind {
-            ast::DelayConstraintKind::Area { area } => writeln!(self.sink, ".area {}", area),
-            ast::DelayConstraintKind::Delay(delay) => self.emit_delay(&delay),
-            ast::DelayConstraintKind::WireLoadSlope { load } => {
-                writeln!(self.sink, ".wire_load_slope {}", load)
-            }
-            ast::DelayConstraintKind::Wire { loads } => {
-                writeln!(
-                    self.sink,
-                    ".wire {}",
-                    loads
-                        .iter()
-                        .map(|load| load.to_string())
-                        .collect::<Vec<String>>()
-                        .join(" ")
-                )
-            }
-            ast::DelayConstraintKind::InputArrival(input_arrival) => {
-                self.emit_input_arrival(&input_arrival)
-            }
-            ast::DelayConstraintKind::DefaultInputArrival { rise, fall } => {
-                writeln!(self.sink, ".default_input_arrival {} {}", rise, fall)
-            }
-            ast::DelayConstraintKind::OutputRequired(output_required) => {
-                self.emit_output_required(&output_required)
-            }
-            ast::DelayConstraintKind::DefaultOutputRequired { rise, fall } => {
-                writeln!(self.sink, ".default_output_required {} {}", rise, fall)
-            }
-            ast::DelayConstraintKind::InputDrive {
-                in_name,
-                rise,
-                fall,
-            } => writeln!(self.sink, ".input_drive {} {} {}", in_name, rise, fall),
-            ast::DelayConstraintKind::DefaultInputDrive { rise, fall } => {
-                writeln!(self.sink, ".default_input_drive {} {}", rise, fall)
-            }
-            ast::DelayConstraintKind::MaxInputLoad { in_name, load } => {
-                writeln!(self.sink, ".max_input_load {} {}", in_name, load)
-            }
-            ast::DelayConstraintKind::DefaultMaxInputLoad { load } => {
-                writeln!(self.sink, ".default_max_input_load {}", load)
-            }
-            ast::DelayConstraintKind::OutputLoad { out_name, load } => {
-                writeln!(self.sink, ".output_load {} {}", out_name, load)
-            }
-            ast::DelayConstraintKind::DefaultOutputLoad { load } => {
-                writeln!(self.sink, ".default_output_load {}", load)
-            }
-        }
-    }
-
-    fn emit_delay_constraint(&mut self, delay_constraint: &ast::DelayConstraint) -> io::Result<()> {
-        for constraint in &delay_constraint.constraints {
-            self.emit_delay_constraint_kind(&constraint)?;
-        }
-        Ok(())
-    }
-
     fn emit_command(&mut self, command: &ast::Command) -> io::Result<()> {
         match command {
             ast::Command::LogicGate(logic_gate) => self.emit_logic_gate(logic_gate),
@@ -266,13 +172,13 @@ impl<W: Write> Emitter<W> {
                 self.emit_subfile_reference(subfile_reference)
             }
             ast::Command::FsmDescription(fsm_description) => {
-                self.emit_fsm_description(fsm_description)
+                unimplemented!()
             }
             ast::Command::ClockConstraint(clock_constraint) => {
-                self.emit_clock_constraint(clock_constraint)
+                unimplemented!()
             }
             ast::Command::DelayConstraint(delay_constraint) => {
-                self.emit_delay_constraint(delay_constraint)
+                unimplemented!()
             }
         }
     }
@@ -294,6 +200,7 @@ impl<W: Write> Emitter<W> {
         }
         for command in &model.commands {
             self.emit_command(&command)?;
+            self.emit_newline()?;
         }
         write!(self.sink, ".end")?;
         Ok(())
