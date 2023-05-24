@@ -334,6 +334,7 @@ pub(crate) mod unsupported {
         >(
             input: &'a str,
         ) -> IResult<&'a str, Self, E> {
+            eprintln!("FsmDescription is unsupported and will be skipped");
             map(
                 tuple((
                     delimited(
@@ -451,6 +452,7 @@ pub(crate) mod unsupported {
     // ClockEvents     ::= ClockEvent (EOL ClockEvent)*
     impl<'a> ClockConstraint<'a> {
         pub(crate) fn parse<E: ParseError<&'a str>>(input: &'a str) -> IResult<&'a str, Self, E> {
+            eprintln!("ClockConstrant is unsupported and will be skipped");
             map(
                 tuple((
                     preceded(
@@ -770,6 +772,7 @@ pub(crate) mod unsupported {
         pub(crate) fn parse<E: ParseError<&'a str> + ContextError<&'a str>>(
             input: &'a str,
         ) -> IResult<&'a str, Self, E> {
+            eprintln!("DelayConstraint is unsupported and will be skipped");
             map(
                 separated_list1(end_of_line, DelayConstraintKind::parse),
                 |constraints| DelayConstraint { constraints },

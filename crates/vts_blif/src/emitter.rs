@@ -44,9 +44,13 @@ impl<W: Write> Emitter<W> {
             logic_gate.inputs.join(" "),
             logic_gate.output
         )?;
-        for single_output in &logic_gate.pla_description {
-            self.emit_single_output(&single_output)?;
+        let mut iter = logic_gate.pla_description.iter();
+        if let Some(first) = iter.next() {
+            self.emit_single_output(&first)?;
+        }
+        for single_output in iter {
             self.emit_newline()?;
+            self.emit_single_output(&single_output)?;
         }
         Ok(())
     }
@@ -137,10 +141,6 @@ impl<W: Write> Emitter<W> {
         };
         write!(self.sink, "{} {} ", command, library_gate.name)?;
         self.emit_formal_actual(&library_gate.formal_actual)?;
-        match library_gate.technology {
-            ast::LibraryTechnology::Gate => (),
-            ast::LibraryTechnology::Latch(_) => write!(self.sink, " ")?,
-        };
         self.emit_library_technology(&library_gate.technology)
     }
 
@@ -205,4 +205,168 @@ impl<W: Write> Emitter<W> {
         write!(self.sink, ".end")?;
         Ok(())
     }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ast::*;
+    use std::io::BufWriter;
+
+    macro_rules! test_emitter {
+        ($test_name:ident, $test_fn:ident, $test_cases:expr) => {
+            #[test]
+            fn $test_name() {
+                let tests = $test_cases;
+                for (ast, expected) in tests {
+                    let sink = BufWriter::new(Vec::new());
+                    let mut emitter = Emitter::new(sink);
+                    assert!(emitter.$test_fn(&ast).is_ok());
+                    emitter.sink.flush().unwrap();
+                    let emitted = std::str::from_utf8(emitter.sink.get_ref()).unwrap();
+                    assert_eq!(emitted, expected);
+                }
+            }
+        };
+    }
+
+    test_emitter!(
+        test_single_output,
+        emit_single_output,
+        [
+            (
+                SingleOutput {
+                    inputs: vec![LogicValue::One, LogicValue::One, LogicValue::Zero],
+                    output: LogicValue::Zero
+                },
+                "110 0"
+            ),
+            (
+                SingleOutput {
+                    inputs: vec![LogicValue::DontCare, LogicValue::One],
+                    output: LogicValue::One
+                },
+                "-1 1"
+            )
+        ]
+    );
+
+    test_emitter!(
+        test_logic_gate,
+        emit_logic_gate,
+        [(
+            LogicGate {
+                exdc: false,
+                inputs: vec!["a", "b", "c"],
+                output: "d",
+                pla_description: vec![
+                    SingleOutput {
+                        inputs: vec![LogicValue::One, LogicValue::DontCare, LogicValue::Zero],
+                        output: LogicValue::Zero
+                    },
+                    SingleOutput {
+                        inputs: vec![LogicValue::DontCare, LogicValue::Zero, LogicValue::DontCare],
+                        output: LogicValue::One
+                    }
+                ]
+            },
+            r#".names a b c d
+1-0 0
+-0- 1"#
+        )]
+    );
+
+    test_emitter!(
+        test_generic_latch,
+        emit_generic_latch,
+        [(
+            GenericLatch {
+                input: "a",
+                output: "b",
+                kind: LatchKind::RisingEdge,
+                control: LatchControl::Clock("clk"),
+                init: LogicValue::Unknown
+            },
+            ".latch a b re clk 3"
+        )]
+    );
+
+    test_emitter!(
+        test_library_gate,
+        emit_library_gate,
+        [
+            (
+                LibraryGate {
+                    name: "split_01",
+                    formal_actual: vec![("a", "b"), ("c", "d")],
+                    technology: LibraryTechnology::Gate
+                },
+                ".gate split_01 a=b c=d"
+            ),
+            (
+                LibraryGate {
+                    name: "and_65",
+                    formal_actual: vec![("input_1", "wire_x")],
+                    technology: LibraryTechnology::Latch(LibraryLatch {
+                        control: LatchControl::GlobalClock,
+                        init: LogicValue::One
+                    })
+                },
+                ".mlatch and_65 input_1=wire_x NIL 1"
+            )
+        ]
+    );
+
+    test_emitter!(
+        test_model_reference,
+        emit_model_reference,
+        [(
+            ModelReference {
+                name: "merger",
+                formal_actual: vec![("wire_x", "output_y"), ("input_a", "wire_vv")]
+            },
+            ".subckt merger wire_x=output_y input_a=wire_vv"
+        )]
+    );
+
+    test_emitter!(
+        test_subfile_reference,
+        emit_subfile_reference,
+        [(
+            SubfileReference {
+                filename: std::path::Path::new("another.blif")
+            },
+            ".search another.blif"
+        )]
+    );
+
+    test_emitter!(
+        test_model,
+        emit_model,
+        [(
+            Model {
+                name: Some("interesting_model"),
+                inputs: vec!["aa", "ab", "ac"],
+                outputs: vec!["zz", "zy", "zx"],
+                clocks: vec!["clk1", "clk2"],
+                commands: vec![Command::LogicGate(LogicGate {
+                    exdc: true,
+                    inputs: vec!["aa", "ab"],
+                    output: "zy",
+                    pla_description: vec![SingleOutput {
+                        inputs: vec![LogicValue::One, LogicValue::One],
+                        output: LogicValue::One
+                    }]
+                })]
+            },
+            r#".model interesting_model
+.inputs aa ab ac
+.outputs zz zy zx
+.clock clk1 clk2
+.exdc
+.names aa ab zy
+11 1
+.end"#
+        )]
+    );
 }
