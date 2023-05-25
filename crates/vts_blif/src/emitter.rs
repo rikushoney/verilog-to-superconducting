@@ -221,10 +221,18 @@ mod tests {
                 for (ast, expected) in tests {
                     let sink = BufWriter::new(Vec::new());
                     let mut emitter = Emitter::new(sink);
-                    assert!(emitter.$test_fn(&ast).is_ok());
+                    if !emitter.$test_fn(&ast).is_ok() {
+                        println!("emitter I/O error");
+                        panic!();
+                    }
                     emitter.sink.flush().unwrap();
                     let emitted = std::str::from_utf8(emitter.sink.get_ref()).unwrap();
-                    assert_eq!(emitted, expected);
+                    if emitted != expected {
+                        println!("emitted does not equal expected");
+                        println!("emitted:\n{}", emitted);
+                        println!("expected:\n{}", expected);
+                        panic!();
+                    }
                 }
             }
         };

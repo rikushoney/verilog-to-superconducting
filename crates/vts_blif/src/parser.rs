@@ -1,5 +1,10 @@
 #![allow(dead_code)]
 
+// TODO:
+// - better error handling and diagnostics
+// - add passes that verifies the AST
+// - add passes that populate implied fields in the AST
+
 use crate::ast::*;
 
 use nom::{
@@ -7,7 +12,7 @@ use nom::{
     bytes::complete::tag,
     character::complete::{char, digit0, line_ending, not_line_ending, one_of, satisfy},
     combinator::{map, map_res, opt, recognize, success, value, verify},
-    error::{ContextError, FromExternalError, ParseError},
+    error::{FromExternalError, ParseError},
     multi::{many0_count, many1, many1_count, separated_list1},
     number::complete::double,
     sequence::{delimited, pair, preceded, separated_pair, terminated, tuple},
@@ -18,26 +23,36 @@ use std::num::ParseIntError;
 use std::path;
 
 // Ident ::= ([^#=] - S)+
-fn ident<'a, E: ParseError<&'a str>>(input: &'a str) -> IResult<&'a str, &'a str, E> {
+fn ident<'a, E>(input: &'a str) -> IResult<&'a str, &'a str, E>
+where
+    E: ParseError<&'a str>,
+{
     recognize(many1_count(satisfy(|ch| {
         !ch.is_whitespace() && "#=".chars().all(|illegal| ch != illegal)
     })))(input)
 }
 
 // .Ident
-fn dot_command<'a, E: ParseError<&'a str>>(
-    command: &'static str,
-) -> impl FnMut(&'a str) -> IResult<&'a str, &'a str, E> {
+fn dot_command<'a, E>(command: &'static str) -> impl FnMut(&'a str) -> IResult<&'a str, &'a str, E>
+where
+    E: ParseError<&'a str>,
+{
     preceded(char('.'), tag(command))
 }
 
 // Comment ::= '#' [^\n]* "\n"
-fn comment<'a, E: ParseError<&'a str>>(input: &'a str) -> IResult<&'a str, &'a str, E> {
+fn comment<'a, E>(input: &'a str) -> IResult<&'a str, &'a str, E>
+where
+    E: ParseError<&'a str>,
+{
     delimited(char('#'), not_line_ending, line_ending)(input)
 }
 
 // EOL ::= S* (S* ("\n" | Comment) S*)+
-fn end_of_line<'a, E: ParseError<&'a str>>(input: &'a str) -> IResult<&'a str, &'a str, E> {
+fn end_of_line<'a, E>(input: &'a str) -> IResult<&'a str, &'a str, E>
+where
+    E: ParseError<&'a str>,
+{
     recognize(tuple((
         many_space,
         many1_count(tuple((many_space, alt((line_ending, comment)), many_space))),
@@ -45,32 +60,43 @@ fn end_of_line<'a, E: ParseError<&'a str>>(input: &'a str) -> IResult<&'a str, &
 }
 
 // S ::= [ \t] | "\\\n"
-fn space<'a, E: ParseError<&'a str>>(input: &'a str) -> IResult<&'a str, &'a str, E> {
+fn space<'a, E>(input: &'a str) -> IResult<&'a str, &'a str, E>
+where
+    E: ParseError<&'a str>,
+{
     alt((recognize(one_of(" \t")), tag("\\\n")))(input)
 }
 
 // S*
-fn many_space<'a, E: ParseError<&'a str>>(input: &'a str) -> IResult<&'a str, &'a str, E> {
+fn many_space<'a, E>(input: &'a str) -> IResult<&'a str, &'a str, E>
+where
+    E: ParseError<&'a str>,
+{
     recognize(many0_count(space))(input)
 }
 
 // S+
-fn some_space<'a, E: ParseError<&'a str>>(input: &'a str) -> IResult<&'a str, &'a str, E> {
+fn some_space<'a, E>(input: &'a str) -> IResult<&'a str, &'a str, E>
+where
+    E: ParseError<&'a str>,
+{
     recognize(many1_count(space))(input)
 }
 
 // PosInt ::= [0-9]+ - "0"
-fn positive_integer<'a, E: ParseError<&'a str> + FromExternalError<&'a str, ParseIntError>>(
-    input: &'a str,
-) -> IResult<&'a str, usize, E> {
+fn positive_integer<'a, E>(input: &'a str) -> IResult<&'a str, usize, E>
+where
+    E: ParseError<&'a str> + FromExternalError<&'a str, ParseIntError>,
+{
     verify(map_res(digit0, |int: &'a str| int.parse()), |int| *int != 0)(input)
 }
 
 // SingleOutput ::= InputPlane+ S+ OutputPlane
 impl<'a> SingleOutput {
-    fn parse<E: ParseError<&'a str> + ContextError<&'a str>>(
-        input: &'a str,
-    ) -> IResult<&'a str, Self, E> {
+    fn parse<E>(input: &'a str) -> IResult<&'a str, Self, E>
+    where
+        E: ParseError<&'a str>,
+    {
         let input_plane = |input| {
             alt((
                 value(LogicValue::Zero, char('0')),
@@ -92,17 +118,19 @@ impl<'a> SingleOutput {
 }
 
 // SingleOutputCover ::= SingleOutput (EOL SingleOutput)*
-fn single_output_cover<'a, E: ParseError<&'a str> + ContextError<&'a str>>(
-    input: &'a str,
-) -> IResult<&'a str, Vec<SingleOutput>, E> {
+fn single_output_cover<'a, E>(input: &'a str) -> IResult<&'a str, Vec<SingleOutput>, E>
+where
+    E: ParseError<&'a str>,
+{
     separated_list1(end_of_line, SingleOutput::parse)(input)
 }
 
 // LogicGate ::= (".exdc" EOL)? ".names" S+ SignalList EOL SingleOutputCover
 impl<'a> LogicGate<'a> {
-    fn parse<E: ParseError<&'a str> + ContextError<&'a str>>(
-        input: &'a str,
-    ) -> IResult<&'a str, Self, E> {
+    fn parse<E>(input: &'a str) -> IResult<&'a str, Self, E>
+    where
+        E: ParseError<&'a str>,
+    {
         map(
             tuple((
                 map(opt(terminated(dot_command("exdc"), end_of_line)), |exdc| {
@@ -132,7 +160,10 @@ impl<'a> LogicGate<'a> {
 
 // LatchKind ::= "fe" | "re" | "ah" | "al" | "as"
 impl<'a> LatchKind {
-    fn parse<E: ParseError<&'a str>>(input: &'a str) -> IResult<&'a str, Self, E> {
+    fn parse<E>(input: &'a str) -> IResult<&'a str, Self, E>
+    where
+        E: ParseError<&'a str>,
+    {
         alt((
             value(LatchKind::FallingEdge, tag("fe")),
             value(LatchKind::RisingEdge, tag("re")),
@@ -145,7 +176,10 @@ impl<'a> LatchKind {
 
 // LogicValue ::= [0-3]
 impl<'a> LogicValue {
-    fn parse<E: ParseError<&'a str>>(input: &'a str) -> IResult<&'a str, Self, E> {
+    fn parse<E>(input: &'a str) -> IResult<&'a str, Self, E>
+    where
+        E: ParseError<&'a str>,
+    {
         alt((
             value(LogicValue::Zero, char('0')),
             value(LogicValue::One, char('1')),
@@ -157,7 +191,10 @@ impl<'a> LogicValue {
 
 // LatchControl ::= Ident | "NIL"
 impl<'a> LatchControl<'a> {
-    fn parse<E: ParseError<&'a str>>(input: &'a str) -> IResult<&'a str, Self, E> {
+    fn parse<E>(input: &'a str) -> IResult<&'a str, Self, E>
+    where
+        E: ParseError<&'a str>,
+    {
         map(ident, |control| match control {
             "NIL" => LatchControl::GlobalClock,
             clock => LatchControl::Clock(clock),
@@ -167,7 +204,10 @@ impl<'a> LatchControl<'a> {
 
 // GenericLatch ::= ".latch" S+ Ident S+ Ident S+ LatchKind S+ LatchControl (S+ LogicValue)?
 impl<'a> GenericLatch<'a> {
-    fn parse<E: ParseError<&'a str>>(input: &'a str) -> IResult<&'a str, Self, E> {
+    fn parse<E>(input: &'a str) -> IResult<&'a str, Self, E>
+    where
+        E: ParseError<&'a str>,
+    {
         map(
             preceded(
                 terminated(dot_command("latch"), some_space),
@@ -194,14 +234,18 @@ impl<'a> GenericLatch<'a> {
 }
 
 // FormalActualList ::= Ident "=" Ident (S+ Ident "=" Ident)*
-fn formal_actual_list<'a, E: ParseError<&'a str>>(
-    input: &'a str,
-) -> IResult<&'a str, FormalActual<'a>, E> {
+fn formal_actual_list<'a, E>(input: &'a str) -> IResult<&'a str, FormalActual<'a>, E>
+where
+    E: ParseError<&'a str>,
+{
     separated_list1(some_space, separated_pair(ident, char('='), ident))(input)
 }
 
 // GateTechnology ::= ".gate" S+ Ident S+ FormalActualList
-fn gate_technology<'a, E: ParseError<&'a str>>(input: &'a str) -> IResult<&'a str, LibraryGate, E> {
+fn gate_technology<'a, E>(input: &'a str) -> IResult<&'a str, LibraryGate, E>
+where
+    E: ParseError<&'a str>,
+{
     map(
         preceded(
             terminated(dot_command("gate"), some_space),
@@ -216,9 +260,10 @@ fn gate_technology<'a, E: ParseError<&'a str>>(input: &'a str) -> IResult<&'a st
 }
 
 // LatchTechnology ::= ".mlatch" S+ Ident S+ FormalActualList S+ LatchControl (S+ LogicValue)?
-fn latch_technology<'a, E: ParseError<&'a str>>(
-    input: &'a str,
-) -> IResult<&'a str, LibraryGate, E> {
+fn latch_technology<'a, E>(input: &'a str) -> IResult<&'a str, LibraryGate, E>
+where
+    E: ParseError<&'a str>,
+{
     map(
         preceded(
             terminated(dot_command("mlatch"), some_space),
@@ -242,14 +287,20 @@ fn latch_technology<'a, E: ParseError<&'a str>>(
 
 // LibraryGate ::= GateTechnology | LatchTechnology
 impl<'a> LibraryGate<'a> {
-    fn parse<E: ParseError<&'a str>>(input: &'a str) -> IResult<&'a str, Self, E> {
+    fn parse<E>(input: &'a str) -> IResult<&'a str, Self, E>
+    where
+        E: ParseError<&'a str>,
+    {
         alt((gate_technology, latch_technology))(input)
     }
 }
 
 // ModelReference ::= ".subckt" S+ Ident S+ FormalActualList
 impl<'a> ModelReference<'a> {
-    fn parse<E: ParseError<&'a str>>(input: &'a str) -> IResult<&'a str, Self, E> {
+    fn parse<E>(input: &'a str) -> IResult<&'a str, Self, E>
+    where
+        E: ParseError<&'a str>,
+    {
         map(
             preceded(
                 terminated(dot_command("subckt"), some_space),
@@ -266,7 +317,10 @@ impl<'a> ModelReference<'a> {
 // SubfileReference ::= ".search" S+ Filename
 // Filename         ::= ("\"" [^"] "\"") | Ident
 impl<'a> SubfileReference<'a> {
-    fn parse<E: ParseError<&'a str>>(input: &'a str) -> IResult<&'a str, Self, E> {
+    fn parse<E>(input: &'a str) -> IResult<&'a str, Self, E>
+    where
+        E: ParseError<&'a str>,
+    {
         let filename = |input| {
             map(
                 alt((
@@ -287,17 +341,16 @@ impl<'a> SubfileReference<'a> {
     }
 }
 
-pub(crate) mod unsupported {
+mod unsupported {
     use super::*;
     use crate::ast::unsupported::*;
 
     // StateTransition ::= LogicValue+ S+ Ident S+ Ident S+ LogicValue+
     impl<'a> StateTransition<'a> {
-        fn parse<
-            E: ParseError<&'a str> + ContextError<&'a str> + FromExternalError<&'a str, ParseIntError>,
-        >(
-            input: &'a str,
-        ) -> IResult<&'a str, Self, E> {
+        fn parse<E>(input: &'a str) -> IResult<&'a str, Self, E>
+        where
+            E: ParseError<&'a str> + FromExternalError<&'a str, ParseIntError>,
+        {
             map(
                 tuple((
                     terminated(many1(LogicValue::parse), some_space),
@@ -315,25 +368,24 @@ pub(crate) mod unsupported {
         }
     }
 
-    // FsmDescription  ::= ".start_kiss" EOL FsmFields EOL StateMapping EOL ".end_kiss" FsmEnd
-    // FsmFields       ::= NumInputs EOL NumOutputs (EOL NumTerms)? (EOL NumStates)? (EOL ResetState)?
-    // NumInputs       ::= ".i" S+ PosInt
-    // NumOutputs      ::= ".o" S+ PosInt
-    // NumTerms        ::= ".p" S+ PosInt
-    // NumStates       ::= ".s" S+ PosInt
-    // ResetState      ::= ".r" S+ Ident
-    // StateMapping    ::= StateTransition (EOL StateTransition)*
-    // FsmEnd          ::= (EOL LatchOrder)? (EOL CodeMapping)?
-    // LatchOrder      ::= ".latch_order" S+ LatchOrderList
-    // LatchOrderList  ::= Ident (S+ Ident)*
-    // CodeMapping     ::= CodeMap (EOL CodeMap)*
-    // CodeMap         ::= ".code" S+ Ident S+ Ident
+    // FsmDescription ::= ".start_kiss" EOL FsmFields EOL StateMapping EOL ".end_kiss" FsmEnd
+    // FsmFields      ::= NumInputs EOL NumOutputs (EOL NumTerms)? (EOL NumStates)? (EOL ResetState)?
+    // NumInputs      ::= ".i" S+ PosInt
+    // NumOutputs     ::= ".o" S+ PosInt
+    // NumTerms       ::= ".p" S+ PosInt
+    // NumStates      ::= ".s" S+ PosInt
+    // ResetState     ::= ".r" S+ Ident
+    // StateMapping   ::= StateTransition (EOL StateTransition)*
+    // FsmEnd         ::= (EOL LatchOrder)? (EOL CodeMapping)?
+    // LatchOrder     ::= ".latch_order" S+ LatchOrderList
+    // LatchOrderList ::= Ident (S+ Ident)*
+    // CodeMapping    ::= CodeMap (EOL CodeMap)*
+    // CodeMap        ::= ".code" S+ Ident S+ Ident
     impl<'a> FsmDescription<'a> {
-        pub(crate) fn parse<
-            E: ParseError<&'a str> + ContextError<&'a str> + FromExternalError<&'a str, ParseIntError>,
-        >(
-            input: &'a str,
-        ) -> IResult<&'a str, Self, E> {
+        pub(crate) fn parse<E>(input: &'a str) -> IResult<&'a str, Self, E>
+        where
+            E: ParseError<&'a str> + FromExternalError<&'a str, ParseIntError>,
+        {
             eprintln!("FsmDescription is unsupported and will be skipped");
             map(
                 tuple((
@@ -407,7 +459,10 @@ pub(crate) mod unsupported {
 
     // Event ::= [rf] "'" Ident (S+ Number S+ Number)?
     impl<'a> Event<'a> {
-        fn parse<E: ParseError<&'a str>>(input: &'a str) -> IResult<&'a str, Self, E> {
+        fn parse<E>(input: &'a str) -> IResult<&'a str, Self, E>
+        where
+            E: ParseError<&'a str>,
+        {
             let clock_edge_skew = |input| {
                 map(
                     pair(delimited(some_space, double, some_space), double),
@@ -431,7 +486,10 @@ pub(crate) mod unsupported {
     // ClockEvent ::= ".clock_event" S+ Number S+ EventsList
     // EventsList ::= Event (S+ Event)*
     impl<'a> ClockEvent<'a> {
-        fn parse<E: ParseError<&'a str>>(input: &'a str) -> IResult<&'a str, Self, E> {
+        fn parse<E>(input: &'a str) -> IResult<&'a str, Self, E>
+        where
+            E: ParseError<&'a str>,
+        {
             map(
                 tuple((
                     preceded(
@@ -451,7 +509,10 @@ pub(crate) mod unsupported {
     // ClockConstraint ::= ".cycle" S+ Number EOL ClockEvents EOL
     // ClockEvents     ::= ClockEvent (EOL ClockEvent)*
     impl<'a> ClockConstraint<'a> {
-        pub(crate) fn parse<E: ParseError<&'a str>>(input: &'a str) -> IResult<&'a str, Self, E> {
+        pub(crate) fn parse<E>(input: &'a str) -> IResult<&'a str, Self, E>
+        where
+            E: ParseError<&'a str>,
+        {
             eprintln!("ClockConstrant is unsupported and will be skipped");
             map(
                 tuple((
@@ -473,7 +534,10 @@ pub(crate) mod unsupported {
     // DelayFields ::= Phase S+ Number S+ Number S+ Number S+ Number S+ Number S+ Number
     // Phase       ::= "INV" | "NONINV" | "UNKNOWN"
     impl<'a> Delay<'a> {
-        fn parse<E: ParseError<&'a str>>(input: &'a str) -> IResult<&'a str, Self, E> {
+        fn parse<E>(input: &'a str) -> IResult<&'a str, Self, E>
+        where
+            E: ParseError<&'a str>,
+        {
             map(
                 tuple((
                     delimited(
@@ -523,7 +587,10 @@ pub(crate) mod unsupported {
 
     // RelativeEvent ::= [ba] S+ [rf] "'" Ident
     impl<'a> RelativeEvent<'a> {
-        fn parse<E: ParseError<&'a str>>(input: &'a str) -> IResult<&'a str, Self, E> {
+        fn parse<E>(input: &'a str) -> IResult<&'a str, Self, E>
+        where
+            E: ParseError<&'a str>,
+        {
             map(
                 tuple((
                     terminated(
@@ -553,7 +620,10 @@ pub(crate) mod unsupported {
 
     // InputArrival ::= ".input_arrival" S+ Ident S+ Number S+ Number (S+ RelativeEvent)?
     impl<'a> InputArrival<'a> {
-        fn parse<E: ParseError<&'a str>>(input: &'a str) -> IResult<&'a str, Self, E> {
+        fn parse<E>(input: &'a str) -> IResult<&'a str, Self, E>
+        where
+            E: ParseError<&'a str>,
+        {
             map(
                 tuple((
                     delimited(
@@ -577,7 +647,10 @@ pub(crate) mod unsupported {
 
     // OutputRequired ::= ".output_required" S+ Ident S+ Number S+ Number (S+ RelativeEvent)?
     impl<'a> OutputRequired<'a> {
-        fn parse<E: ParseError<&'a str>>(input: &'a str) -> IResult<&'a str, Self, E> {
+        fn parse<E>(input: &'a str) -> IResult<&'a str, Self, E>
+        where
+            E: ParseError<&'a str>,
+        {
             map(
                 tuple((
                     delimited(
@@ -614,9 +687,10 @@ pub(crate) mod unsupported {
     //                         OutputLoad        |
     //                         DefOutputLoad
     impl<'a> DelayConstraintKind<'a> {
-        pub(crate) fn parse<E: ParseError<&'a str> + ContextError<&'a str>>(
-            input: &'a str,
-        ) -> IResult<&'a str, Self, E> {
+        fn parse<E>(input: &'a str) -> IResult<&'a str, Self, E>
+        where
+            E: ParseError<&'a str>,
+        {
             // Area ::= ".area" S+ Number
             let area = |input| {
                 map(
@@ -769,9 +843,10 @@ pub(crate) mod unsupported {
 
     // DelayConstraint ::= DelayConstraintKind (EOF DelayConstraintKind)*
     impl<'a> DelayConstraint<'a> {
-        pub(crate) fn parse<E: ParseError<&'a str> + ContextError<&'a str>>(
-            input: &'a str,
-        ) -> IResult<&'a str, Self, E> {
+        pub(crate) fn parse<E>(input: &'a str) -> IResult<&'a str, Self, E>
+        where
+            E: ParseError<&'a str>,
+        {
             eprintln!("DelayConstraint is unsupported and will be skipped");
             map(
                 separated_list1(end_of_line, DelayConstraintKind::parse),
@@ -790,11 +865,10 @@ pub(crate) mod unsupported {
 //             ClockConstraint  |
 //             DelayConstraint
 impl<'a> Command<'a> {
-    fn parse<
-        E: ParseError<&'a str> + ContextError<&'a str> + FromExternalError<&'a str, ParseIntError>,
-    >(
-        input: &'a str,
-    ) -> IResult<&'a str, Self, E> {
+    fn parse<E>(input: &'a str) -> IResult<&'a str, Self, E>
+    where
+        E: ParseError<&'a str> + FromExternalError<&'a str, ParseIntError>,
+    {
         use crate::ast::unsupported;
         alt((
             map(LogicGate::parse, Command::LogicGate),
@@ -823,7 +897,10 @@ enum ModelField<'a> {
 }
 
 // SignalList ::= Ident (S+ Ident)*
-fn signal_list<'a, E: ParseError<&'a str>>(input: &'a str) -> IResult<&'a str, Vec<&'a str>, E> {
+fn signal_list<'a, E>(input: &'a str) -> IResult<&'a str, Vec<&'a str>, E>
+where
+    E: ParseError<&'a str>,
+{
     separated_list1(some_space, ident)(input)
 }
 
@@ -832,7 +909,10 @@ fn signal_list<'a, E: ParseError<&'a str>>(input: &'a str) -> IResult<&'a str, V
 // OutputsList ::= ".outputs" S+ SignalList
 // ClockList   ::= ".clock" S+ SignalList
 impl<'a> ModelField<'a> {
-    fn parse<E: ParseError<&'a str>>(input: &'a str) -> IResult<&'a str, Self, E> {
+    fn parse<E>(input: &'a str) -> IResult<&'a str, Self, E>
+    where
+        E: ParseError<&'a str>,
+    {
         map(
             alt((
                 pair(terminated(dot_command("inputs"), some_space), signal_list),
@@ -850,29 +930,27 @@ impl<'a> ModelField<'a> {
 }
 
 // ModelFields ::= ModelField (EOL ModelField)*
-fn model_fields<'a, E: ParseError<&'a str>>(
-    input: &'a str,
-) -> IResult<&'a str, Vec<ModelField>, E> {
+fn model_fields<'a, E>(input: &'a str) -> IResult<&'a str, Vec<ModelField>, E>
+where
+    E: ParseError<&'a str>,
+{
     separated_list1(end_of_line, ModelField::parse)(input)
 }
 
 // Commands ::= Command (EOL Command)*
-fn commands<
-    'a,
-    E: ParseError<&'a str> + ContextError<&'a str> + FromExternalError<&'a str, ParseIntError>,
->(
-    input: &'a str,
-) -> IResult<&'a str, Vec<Command>, E> {
+fn commands<'a, E>(input: &'a str) -> IResult<&'a str, Vec<Command>, E>
+where
+    E: ParseError<&'a str> + FromExternalError<&'a str, ParseIntError>,
+{
     separated_list1(end_of_line, Command::parse)(input)
 }
 
 // Model ::= ".model" S+ Ident EOL ModelFields EOL Commands (EOL ".end")?
 impl<'a> Model<'a> {
-    fn parse<
-        E: ParseError<&'a str> + ContextError<&'a str> + FromExternalError<&'a str, ParseIntError>,
-    >(
-        input: &'a str,
-    ) -> IResult<&str, Self, E> {
+    fn parse<E>(input: &'a str) -> IResult<&str, Self, E>
+    where
+        E: ParseError<&'a str> + FromExternalError<&'a str, ParseIntError>,
+    {
         map(
             delimited(
                 terminated(dot_command("model"), some_space),
@@ -923,7 +1001,6 @@ mod tests {
                 for (input, expected, rest) in tests {
                     let result: IResult<_, _, VerboseError<&str>> = $test_fn(input);
                     if let Ok((remaining, actual)) = result {
-                        /*
                         if actual != expected {
                             println!("parser succeeded but did not get expected value");
                             println!("expected:\n{:#?}", expected);
@@ -937,9 +1014,6 @@ mod tests {
                         if actual != expected || remaining != rest {
                             panic!();
                         }
-                        */
-                        assert_eq!(actual, expected);
-                        assert_eq!(remaining, rest);
                     } else {
                         panic!(
                             "parser failed with errors:\n{}",

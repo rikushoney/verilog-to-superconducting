@@ -60,12 +60,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "serde"
-version = "1.0.163"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2113ab51b87a539ae008b5c6c02dc020ffa39afd2d83cffcb3f4eb2722cebec2"
-
-[[package]]
 name = "syn"
 version = "2.0.16"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -112,19 +106,6 @@ version = "0.0.0"
 dependencies = [
  "nom",
  "nom_locate",
- "serde",
  "thiserror",
  "unicode-ident",
 ]
-
-[[package]]
-name = "vts_lefdef"
-version = "0.1.0"
-dependencies = [
- "nom",
- "unicode-ident",
-]
-
-[[package]]
-name = "vts_verilog"
-version = "0.1.0"

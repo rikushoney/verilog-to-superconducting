@@ -6,6 +6,5 @@ edition = "2021"
 [dependencies]
 nom = "7"
 nom_locate = "4"
-serde = "1"
 thiserror = "1"
 unicode-ident = "1"
