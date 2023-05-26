@@ -23,12 +23,12 @@ impl<W: Write> Emitter<W> {
     }
 
     fn emit_newline(&mut self) -> io::Result<()> {
-        write!(self.sink, "\n")
+        writeln!(self.sink)
     }
 
     fn emit_single_output(&mut self, single_output: &ast::SingleOutput) -> io::Result<()> {
         for logic_value in &single_output.inputs {
-            self.emit_logic_value(&logic_value, LogicValueStyle::Symbolic)?;
+            self.emit_logic_value(logic_value, LogicValueStyle::Symbolic)?;
         }
         self.emit_space()?;
         self.emit_logic_value(&single_output.output, LogicValueStyle::Symbolic)
@@ -46,11 +46,11 @@ impl<W: Write> Emitter<W> {
         )?;
         let mut iter = logic_gate.pla_description.iter();
         if let Some(first) = iter.next() {
-            self.emit_single_output(&first)?;
+            self.emit_single_output(first)?;
         }
         for single_output in iter {
             self.emit_newline()?;
-            self.emit_single_output(&single_output)?;
+            self.emit_single_output(single_output)?;
         }
         Ok(())
     }
@@ -118,7 +118,7 @@ impl<W: Write> Emitter<W> {
     ) -> io::Result<()> {
         match library_technology {
             ast::LibraryTechnology::Gate => Ok(()),
-            ast::LibraryTechnology::Latch(library_latch) => self.emit_library_latch(&library_latch),
+            ast::LibraryTechnology::Latch(library_latch) => self.emit_library_latch(library_latch),
         }
     }
 
@@ -188,7 +188,7 @@ impl<W: Write> Emitter<W> {
         if let Some(name) = model.name {
             write!(self.sink, " {}", name)?;
         }
-        write!(self.sink, "\n")?;
+        self.emit_newline()?;
         if !model.inputs.is_empty() {
             writeln!(self.sink, ".inputs {}", model.inputs.join(" "))?;
         }
@@ -199,7 +199,7 @@ impl<W: Write> Emitter<W> {
             writeln!(self.sink, ".clock {}", model.clocks.join(" "))?;
         }
         for command in &model.commands {
-            self.emit_command(&command)?;
+            self.emit_command(command)?;
             self.emit_newline()?;
         }
         write!(self.sink, ".end")?;
