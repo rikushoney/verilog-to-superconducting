@@ -5,4 +5,4 @@ version = "0.1.0"
 edition = "2021"
 
 [workspace]
-members = ["crates/vts_blif", "crates/vts_fpgaarch"]
+members = ["crates/vts_aiger", "crates/vts_blif"]

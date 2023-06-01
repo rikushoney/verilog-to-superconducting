@@ -1,7 +1,0 @@
-[package]
-name = "vts_fpgaarch"
-version = "0.0.0"
-edition = "2021"
-
-[dependencies]
-roxmltree = "0.18"
