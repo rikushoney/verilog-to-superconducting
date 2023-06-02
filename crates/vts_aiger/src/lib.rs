@@ -80,11 +80,32 @@ struct Header {
 
 type Result<T> = std::result::Result<T, Error>;
 
+#[derive(Debug, Eq, PartialEq)]
 struct Literal(usize);
 
+impl From<usize> for Literal {
+    fn from(literal: usize) -> Self {
+        Self(literal)
+    }
+}
+
+#[derive(Debug, Eq, PartialEq)]
 struct Latch(Literal, Literal);
 
+impl From<(usize, usize)> for Latch {
+    fn from(latch: (usize, usize)) -> Self {
+        Self(latch.0.into(), latch.1.into())
+    }
+}
+
+#[derive(Debug, Eq, PartialEq)]
 struct Gate(Literal, Literal, Literal);
+
+impl From<(usize, usize, usize)> for Gate {
+    fn from(gate: (usize, usize, usize)) -> Self {
+        Self(gate.0.into(), gate.1.into(), gate.2.into())
+    }
+}
 
 fn skip_space(buffer: &mut Buffer) -> Result<()> {
     if buffer.peek().ok_or(Error::Eof)? != b' ' {
@@ -186,35 +207,52 @@ fn parse_header(buffer: &mut Buffer) -> Result<(FileType, Header)> {
 
 fn parse_literals(buffer: &mut Buffer, num_literals: usize) -> Result<Vec<Literal>> {
     let mut literals = Vec::with_capacity(num_literals);
-    for _ in 0..num_literals {
-        literals.push(Literal(parse_unsigned(buffer)?));
-        skip_newline(buffer)?
+    if num_literals > 0 {
+        literals.push(parse_unsigned(buffer)?.into());
+    }
+    for _ in 1..num_literals {
+        skip_newline(buffer)?;
+        literals.push(parse_unsigned(buffer)?.into());
     }
     Ok(literals)
 }
 
+fn parse_latch(buffer: &mut Buffer) -> Result<Latch> {
+    let current_state = parse_unsigned(buffer)?;
+    skip_space(buffer)?;
+    let next_state = parse_unsigned(buffer)?;
+    Ok((current_state, next_state).into())
+}
+
 fn parse_latches(buffer: &mut Buffer, num_latches: usize) -> Result<Vec<Latch>> {
     let mut latches = Vec::with_capacity(num_latches);
-    for _ in 0..num_latches {
-        let current_state = Literal(parse_unsigned(buffer)?);
-        skip_space(buffer)?;
-        let next_state = Literal(parse_unsigned(buffer)?);
-        latches.push(Latch(current_state, next_state));
-        skip_newline(buffer)?
+    if num_latches > 0 {
+        latches.push(parse_latch(buffer)?);
+    }
+    for _ in 1..num_latches {
+        skip_newline(buffer)?;
+        latches.push(parse_latch(buffer)?);
     }
     Ok(latches)
 }
 
+fn parse_gate(buffer: &mut Buffer) -> Result<Gate> {
+    let lhs = parse_unsigned(buffer)?;
+    skip_space(buffer)?;
+    let rhs1 = parse_unsigned(buffer)?;
+    skip_space(buffer)?;
+    let rhs2 = parse_unsigned(buffer)?;
+    Ok((lhs, rhs1, rhs2).into())
+}
+
 fn parse_gates(buffer: &mut Buffer, num_gates: usize) -> Result<Vec<Gate>> {
     let mut gates = Vec::with_capacity(num_gates);
-    for _ in 0..num_gates {
-        let lhs = Literal(parse_unsigned(buffer)?);
-        skip_space(buffer)?;
-        let rhs1 = Literal(parse_unsigned(buffer)?);
-        skip_space(buffer)?;
-        let rhs2 = Literal(parse_unsigned(buffer)?);
-        gates.push(Gate(lhs, rhs1, rhs2));
-        skip_newline(buffer)?
+    if num_gates > 0 {
+        gates.push(parse_gate(buffer)?);
+    }
+    for _ in 1..num_gates {
+        skip_newline(buffer)?;
+        gates.push(parse_gate(buffer)?);
     }
     Ok(gates)
 }
@@ -306,6 +344,33 @@ mod tests {
         assert_eq!(
             parse_header(&mut buffer).unwrap_err(),
             Error::InvalidUnsigned
+        );
+    }
+
+    #[test]
+    fn test_parse_literals() {
+        let mut buffer = Buffer::new(b"2\n4\n6");
+        assert_eq!(
+            parse_literals(&mut buffer, 3).unwrap(),
+            vec![2.into(), 4.into(), 6.into()]
+        );
+    }
+
+    #[test]
+    fn test_parse_latches() {
+        let mut buffer = Buffer::new(b"2 5\n3 7");
+        assert_eq!(
+            parse_latches(&mut buffer, 2).unwrap(),
+            vec![(2, 5).into(), (3, 7).into()]
+        );
+    }
+
+    #[test]
+    fn test_parse_gates() {
+        let mut buffer = Buffer::new(b"3 5 8\n4 2 6");
+        assert_eq!(
+            parse_gates(&mut buffer, 2).unwrap(),
+            vec![(3, 5, 8).into(), (4, 2, 6).into()]
         );
     }
 }
