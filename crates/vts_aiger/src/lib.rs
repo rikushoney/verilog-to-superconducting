@@ -1,5 +1,6 @@
 #![allow(dead_code)]
 
+// borrowed from https://github.com/seanmonstar/httparse/blob/master/src/iter.rs
 struct Buffer<'a> {
     start: *const u8,
     cursor: *const u8,
@@ -47,6 +48,17 @@ impl<'a> Buffer<'a> {
     unsafe fn advance(&mut self, count: usize) {
         self.cursor = self.cursor.add(count);
         debug_assert!(self.cursor <= self.end);
+    }
+
+    fn eof(&self) -> bool {
+        debug_assert!(self.cursor <= self.end);
+        self.cursor == self.end
+    }
+}
+
+impl<'a> From<&'a str> for Buffer<'a> {
+    fn from(input: &'a str) -> Buffer<'a> {
+        Buffer::new(input.as_bytes())
     }
 }
 
@@ -105,6 +117,14 @@ impl From<(usize, usize, usize)> for Gate {
     fn from(gate: (usize, usize, usize)) -> Self {
         Self(gate.0.into(), gate.1.into(), gate.2.into())
     }
+}
+
+#[derive(Debug, PartialEq)]
+struct Body {
+    inputs: Vec<Literal>,
+    latches: Vec<Latch>,
+    outputs: Vec<Literal>,
+    gates: Vec<Gate>,
 }
 
 fn skip_space(buffer: &mut Buffer) -> Result<()> {
@@ -257,17 +277,39 @@ fn parse_gates(buffer: &mut Buffer, num_gates: usize) -> Result<Vec<Gate>> {
     Ok(gates)
 }
 
+fn parse_body(buffer: &mut Buffer, header: &Header) -> Result<Body> {
+    let inputs = parse_literals(buffer, header.num_inputs)?;
+    if !inputs.is_empty() && !buffer.eof() {
+        skip_newline(buffer)?;
+    }
+    let latches = parse_latches(buffer, header.num_latches)?;
+    if !latches.is_empty() && !buffer.eof() {
+        skip_newline(buffer)?;
+    }
+    let outputs = parse_literals(buffer, header.num_outputs)?;
+    if !outputs.is_empty() && !buffer.eof() {
+        skip_newline(buffer)?;
+    }
+    let gates = parse_gates(buffer, header.num_gates)?;
+    Ok(Body {
+        inputs,
+        latches,
+        outputs,
+        gates,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
     fn test_peek_past_end() {
-        let mut buffer = Buffer::new(b"a");
+        let mut buffer = Buffer::from("a");
         assert_eq!(buffer.peek().unwrap(), b'a');
         unsafe { buffer.bump() };
         assert_eq!(buffer.peek(), None);
-        let mut buffer = Buffer::new(b"a");
+        let mut buffer = Buffer::from("a");
         assert_eq!(buffer.peek_n(1).unwrap(), b"a");
         unsafe { buffer.advance(1) };
         assert_eq!(buffer.peek_n(1), None);
@@ -275,21 +317,23 @@ mod tests {
 
     #[test]
     fn test_parse_magic() {
-        let mut buffer = Buffer::new(b"aig");
+        let mut buffer = Buffer::from("aig");
         assert_eq!(parse_magic(&mut buffer).unwrap(), FileType::Binary);
-        let mut buffer = Buffer::new(b"aag");
+        let mut buffer = Buffer::from("aag");
         assert_eq!(parse_magic(&mut buffer).unwrap(), FileType::Ascii);
-        let mut buffer = Buffer::new(b"baa");
+        let mut buffer = Buffer::from("baa");
         assert_eq!(parse_magic(&mut buffer).unwrap_err(), Error::InvalidMagic);
     }
 
     #[test]
     fn test_parse_unsigned() {
-        let mut buffer = Buffer::new(b"123");
+        let mut buffer = Buffer::from("0");
+        assert_eq!(parse_unsigned(&mut buffer).unwrap(), 0);
+        let mut buffer = Buffer::from("123");
         assert_eq!(parse_unsigned(&mut buffer).unwrap(), 123);
-        let mut buffer = Buffer::new(b"12a3");
+        let mut buffer = Buffer::from("12a3");
         assert_eq!(parse_unsigned(&mut buffer).unwrap(), 12);
-        let mut buffer = Buffer::new(b"a123");
+        let mut buffer = Buffer::from("a123");
         assert_eq!(
             parse_unsigned(&mut buffer).unwrap_err(),
             Error::InvalidUnsigned
@@ -308,7 +352,7 @@ mod tests {
 
     #[test]
     fn test_parse_header() {
-        let mut buffer = Buffer::new(b"aag 0 0 0 0 0");
+        let mut buffer = Buffer::from("aag 0 0 0 0 0");
         assert_eq!(
             parse_header(&mut buffer).unwrap(),
             (
@@ -322,7 +366,7 @@ mod tests {
                 }
             )
         );
-        let mut buffer = Buffer::new(b"aag 10 4 3 2 1");
+        let mut buffer = Buffer::from("aag 10 4 3 2 1");
         assert_eq!(
             parse_header(&mut buffer).unwrap(),
             (
@@ -336,11 +380,11 @@ mod tests {
                 }
             )
         );
-        let mut buffer = Buffer::new(b"aag 4 1 2 1a");
+        let mut buffer = Buffer::from("aag 4 1 2 1a");
         assert_eq!(parse_header(&mut buffer).unwrap_err(), Error::ExpectedSpace);
-        let mut buffer = Buffer::new(b"aag 4 1 2 1 ");
+        let mut buffer = Buffer::from("aag 4 1 2 1 ");
         assert_eq!(parse_header(&mut buffer).unwrap_err(), Error::Eof);
-        let mut buffer = Buffer::new(b"aag 4 1 2 1 a");
+        let mut buffer = Buffer::from("aag 4 1 2 1 a");
         assert_eq!(
             parse_header(&mut buffer).unwrap_err(),
             Error::InvalidUnsigned
@@ -349,7 +393,7 @@ mod tests {
 
     #[test]
     fn test_parse_literals() {
-        let mut buffer = Buffer::new(b"2\n4\n6");
+        let mut buffer = Buffer::from("2\n4\n6");
         assert_eq!(
             parse_literals(&mut buffer, 3).unwrap(),
             vec![2.into(), 4.into(), 6.into()]
@@ -358,7 +402,7 @@ mod tests {
 
     #[test]
     fn test_parse_latches() {
-        let mut buffer = Buffer::new(b"2 5\n3 7");
+        let mut buffer = Buffer::from("2 5\n3 7");
         assert_eq!(
             parse_latches(&mut buffer, 2).unwrap(),
             vec![(2, 5).into(), (3, 7).into()]
@@ -367,10 +411,59 @@ mod tests {
 
     #[test]
     fn test_parse_gates() {
-        let mut buffer = Buffer::new(b"3 5 8\n4 2 6");
+        let mut buffer = Buffer::from("3 5 8\n4 2 6");
         assert_eq!(
             parse_gates(&mut buffer, 2).unwrap(),
             vec![(3, 5, 8).into(), (4, 2, 6).into()]
+        );
+    }
+
+    #[test]
+    fn test_parse_empty() {
+        let mut buffer = Buffer::from("");
+        let header = Header {
+            max_index: 0,
+            num_inputs: 0,
+            num_latches: 0,
+            num_outputs: 0,
+            num_gates: 0,
+        };
+        assert_eq!(
+            parse_body(&mut buffer, &header).unwrap(),
+            Body {
+                inputs: vec![],
+                latches: vec![],
+                outputs: vec![],
+                gates: vec![]
+            }
+        );
+    }
+
+    #[test]
+    fn test_parse_constants() {
+        let mut buffer = Buffer::from("aag 0 0 0 1 0\n0");
+        let (_, header) = parse_header(&mut buffer).unwrap();
+        skip_newline(&mut buffer).unwrap();
+        assert_eq!(
+            parse_body(&mut buffer, &header).unwrap(),
+            Body {
+                inputs: vec![],
+                latches: vec![],
+                outputs: vec![0.into()],
+                gates: vec![]
+            }
+        );
+        let mut buffer = Buffer::from("aag 0 0 0 1 0\n1");
+        let (_, header) = parse_header(&mut buffer).unwrap();
+        skip_newline(&mut buffer).unwrap();
+        assert_eq!(
+            parse_body(&mut buffer, &header).unwrap(),
+            Body {
+                inputs: vec![],
+                latches: vec![],
+                outputs: vec![1.into()],
+                gates: vec![]
+            }
         );
     }
 }
