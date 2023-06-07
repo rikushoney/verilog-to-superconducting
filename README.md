@@ -1,10 +1,15 @@
-# The Verilog-To-Superconducting (VTS) project.
+# The Verilog-To-Superconducting (VTS) project
 
 VTS is a framework for generating and synthesizing SPGA (superconducting programmable gate array)
 hardware.
 
-# License
+## License
 
-This software is licensed under the terms of both the MIT and Apache (Version 2.0) Licenses.
+This project is licensed under either of
 
-See [LICENSE-APACHE](LICENSE-APACHE) and [LICENSE-MIT](LICENSE-MIT) for more information.
+ * Apache License, Version 2.0, ([LICENSE-APACHE](LICENSE-APACHE) or
+   https://www.apache.org/licenses/LICENSE-2.0)
+ * MIT license ([LICENSE-MIT](LICENSE-MIT) or
+   https://opensource.org/licenses/MIT)
+
+at your option.
