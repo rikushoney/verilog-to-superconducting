@@ -8,16 +8,16 @@ version = "0.1.0"
 
 [[package]]
 name = "vts_archfpga"
-version = "0.1.0"
+version = "0.0.0"
 
 [[package]]
 name = "vts_blif"
-version = "0.1.0"
+version = "0.0.0"
 
 [[package]]
 name = "vts_parsec"
-version = "0.1.0"
+version = "0.0.0"
 
 [[package]]
 name = "vts_verilog"
-version = "0.1.0"
+version = "0.0.0"
