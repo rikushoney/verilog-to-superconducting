@@ -4,3 +4,6 @@ version = "0.0.0"
 edition = "2021"
 
 [dependencies]
+nom = "7"
+nom_locate = "4"
+unicode-ident = "1"

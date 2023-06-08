@@ -1,3 +1,5 @@
+pub mod parser;
+
 pub type Signal<'a> = &'a str;
 
 #[derive(Clone, Debug, PartialEq)]
