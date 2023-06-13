@@ -1,4 +1,7 @@
-pub mod parser;
+mod cursor;
+mod lexer;
+mod parser;
+mod strspan;
 
 pub type Signal<'a> = &'a str;
 

@@ -6,3 +6,6 @@ edition = "2021"
 
 [workspace]
 members = ["crates/*"]
+
+[dependencies]
+clap = "4"
