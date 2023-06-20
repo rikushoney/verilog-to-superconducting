@@ -1,19 +1,23 @@
-#[derive(Clone, Debug, PartialEq)]
-pub(crate) struct StrSpan<'a> {
-    span: &'a str,
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct StrSpan<'a> {
+    text: &'a str,
     start: usize,
 }
 
 impl<'a> StrSpan<'a> {
-    pub(crate) fn new(span: &'a str, start: usize) -> Self {
-        Self { span, start }
+    pub fn new(text: &'a str, start: usize) -> Self {
+        Self { text, start }
     }
 
-    pub(crate) fn span(&self) -> &'a str {
-        self.span
+    pub fn as_str(&self) -> &'a str {
+        self.text
     }
 
-    pub(crate) fn start(&self) -> usize {
+    pub fn start(&self) -> usize {
         self.start
+    }
+
+    pub fn empty() -> Self {
+        Self { text: "", start: 0 }
     }
 }
