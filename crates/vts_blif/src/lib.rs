@@ -228,7 +228,7 @@ impl<'a> Model<'a> {
                         .as_str()
                         .chars()
                         // SAFETY: checked by tokenizer
-                        .map(|ch| LogicValue::from_unchecked(ch))
+                        .map(LogicValue::from_unchecked)
                         .collect();
                     // SAFETY: checked by tokenizer
                     let output = LogicValue::from_unchecked(
