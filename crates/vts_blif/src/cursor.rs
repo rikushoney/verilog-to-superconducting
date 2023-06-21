@@ -1,3 +1,4 @@
+use crate::blifchar::is_space;
 use crate::strspan::StrSpan;
 
 pub struct Cursor<'a> {
@@ -73,11 +74,15 @@ impl<'a> Cursor<'a> {
     }
 
     pub fn skip_whitespace_and_line_continue(&mut self) {
-        self.skip_while(|ch| matches!(ch, '\t' | '\r' | ' '));
-        if self.starts_with("\\\n") {
-            self.advance(2);
-        } else if self.starts_with("\\\r\n") {
-            self.advance(3);
+        loop {
+            self.skip_while(is_space);
+            if self.starts_with("\\\n") {
+                self.advance(2);
+            } else if self.starts_with("\\\r\n") {
+                self.advance(3);
+            } else {
+                break;
+            }
         }
     }
 

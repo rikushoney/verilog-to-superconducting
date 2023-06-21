@@ -18,16 +18,31 @@ pub enum LogicValue {
     Unknown,
 }
 
+impl LogicValue {
+    fn from_unchecked(ch: char) -> Self {
+        match ch {
+            '0' => LogicValue::Zero,
+            '1' => LogicValue::One,
+            '-' => LogicValue::DontCare,
+            _ => {
+                unreachable!("should be checked by tokenizer")
+            }
+        }
+    }
+}
+
 impl TryFrom<char> for LogicValue {
-    type Error = ();
+    type Error = crate::error::Error;
 
     fn try_from(ch: char) -> Result<Self, Self::Error> {
-        match ch {
-            '0' => Ok(LogicValue::Zero),
-            '1' => Ok(LogicValue::One),
-            '-' => Ok(Self::DontCare),
-            _ => Err(()),
-        }
+        Ok(match ch {
+            '0' => LogicValue::Zero,
+            '1' => LogicValue::One,
+            '-' => LogicValue::DontCare,
+            _ => {
+                return Err(Error::InvalidLogicValue);
+            }
+        })
     }
 }
 
@@ -44,6 +59,16 @@ pub struct LogicGate<'a> {
     pub pla_description: Vec<SingleOutput>,
 }
 
+impl<'a> LogicGate<'a> {
+    fn empty() -> Self {
+        Self {
+            inputs: vec![],
+            output: "",
+            pla_description: vec![],
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub enum LatchTrigger {
     FallingEdge,
@@ -54,7 +79,7 @@ pub enum LatchTrigger {
 }
 
 impl TryFrom<&str> for LatchTrigger {
-    type Error = ();
+    type Error = crate::error::Error;
 
     fn try_from(text: &str) -> std::result::Result<Self, Self::Error> {
         Ok(match text {
@@ -64,7 +89,7 @@ impl TryFrom<&str> for LatchTrigger {
             "al" => Self::ActiveLow,
             "as" => Self::Asynchronous,
             _ => {
-                return Err(());
+                return Err(Error::InvalidLatchTrigger);
             }
         })
     }
@@ -91,7 +116,7 @@ pub struct GenericLatch<'a> {
     pub input: Signal<'a>,
     pub output: Signal<'a>,
     pub trigger: Option<LatchTrigger>,
-    pub control: Option<LatchControl<'a>>,
+    pub control: LatchControl<'a>,
     pub init: LogicValue,
 }
 
@@ -166,13 +191,9 @@ impl<'a> Model<'a> {
 
     fn parse(tokens: &mut Tokenizer<'a>) -> Result<Self, Error> {
         let mut model = Self::empty();
-        let mut logic_gate = None;
+        let mut logic_gate = LogicGate::empty();
         for token in tokens.by_ref() {
             let token = token?;
-            if logic_gate.is_some() && !matches!(token, Token::SingleOutput { .. }) {
-                model.commands.push(Command::LogicGate(logic_gate.unwrap()));
-                logic_gate = None;
-            }
             match token {
                 Token::ModelHeader { model_name, .. } => {
                     model.name = model_name.map(|name| name.as_str());
@@ -193,32 +214,74 @@ impl<'a> Model<'a> {
                         .extend(clock_list.into_iter().map(|clock| clock.as_str()));
                 }
                 Token::Names { inputs, output, .. } => {
-                    logic_gate = Some(LogicGate {
-                        inputs: inputs.into_iter().map(|input| input.as_str()).collect(),
-                        output: output.as_str(),
-                        pla_description: vec![],
-                    });
+                    logic_gate
+                        .inputs
+                        .extend(inputs.into_iter().map(|input| input.as_str()));
+                    logic_gate.output = output.as_str();
                 }
                 Token::SingleOutput {
                     input_plane,
                     output_plane,
                     ..
                 } => {
-                    if let Some(logic_gate) = logic_gate.as_mut() {
-                        let inputs = input_plane
+                    let inputs = input_plane
+                        .as_str()
+                        .chars()
+                        // SAFETY: checked by tokenizer
+                        .map(|ch| LogicValue::from_unchecked(ch))
+                        .collect();
+                    // SAFETY: checked by tokenizer
+                    let output = LogicValue::from_unchecked(
+                        output_plane
                             .as_str()
                             .chars()
-                            .map(|ch| LogicValue::try_from(ch).unwrap())
-                            .collect();
-                        let output =
-                            LogicValue::try_from(output_plane.as_str().chars().next().unwrap())
-                                .unwrap();
-                        logic_gate
-                            .pla_description
-                            .push(SingleOutput { inputs, output });
-                    } else {
-                        return Err(unexpected!("single output"));
-                    }
+                            .next()
+                            .expect("should be checked by tokenizer"),
+                    );
+                    logic_gate
+                        .pla_description
+                        .push(SingleOutput { inputs, output });
+                }
+                Token::PlaDescriptionEnd(..) => {
+                    let prev_logic_gate = std::mem::replace(&mut logic_gate, LogicGate::empty());
+                    model.commands.push(Command::LogicGate(prev_logic_gate));
+                }
+                Token::Latch {
+                    input,
+                    output,
+                    trigger,
+                    control,
+                    init_val,
+                    ..
+                } => {
+                    let input = input.as_str();
+                    let output = output.as_str();
+                    let trigger = trigger
+                        .map(|trigger| LatchTrigger::try_from(trigger.as_str()))
+                        .transpose()?;
+                    let control = control.map_or(LatchControl::Global, |control| {
+                        LatchControl::from(control.as_str())
+                    });
+                    let init = init_val
+                        .map(|init_val| {
+                            LogicValue::try_from(
+                                init_val
+                                    .as_str()
+                                    .chars()
+                                    .next()
+                                    .expect("should be checked by tokenizer"),
+                            )
+                        })
+                        .transpose()?
+                        .unwrap_or(LogicValue::Unknown);
+                    let latch = GenericLatch {
+                        input,
+                        output,
+                        trigger,
+                        control,
+                        init,
+                    };
+                    model.commands.push(Command::GenericLatch(latch));
                 }
                 _ => todo!(),
             }
@@ -227,7 +290,7 @@ impl<'a> Model<'a> {
     }
 }
 
-pub fn parse_circuit<'a>(input: &'a str) -> Result<Vec<Model<'a>>, Error> {
+pub fn parse_circuit(input: &str) -> Result<Vec<Model<'_>>, Error> {
     let mut tokens = Tokenizer::new(input);
     let first = Model::parse(&mut tokens)?;
     let mut models = vec![first];

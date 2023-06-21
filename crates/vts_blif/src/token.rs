@@ -59,6 +59,7 @@ pub enum Token<'a> {
         input_plane: StrSpan<'a>,
         output_plane: StrSpan<'a>,
     },
+    PlaDescriptionEnd(StrSpan<'a>),
     Subckt {
         span: StrSpan<'a>,
         model_name: StrSpan<'a>,
@@ -210,10 +211,14 @@ fn parse_single_output<'a>(cur: &mut Cursor<'a>) -> ParseResult<Token<'a>> {
     }
     cur.skip_whitespace_and_line_continue();
     let output_plane = parse_text(cur).map_err(|_| expected!("output plane"))?;
-    if !output_plane.as_str().chars().all(is_logic) {
+    if !output_plane
+        .as_str()
+        .chars()
+        .all(|ch| matches!(ch, '0' | '1'))
+    {
         return Err(Error::InvalidLogicValue);
     }
-    if output_plane.as_str().chars().count() > 1 {
+    if output_plane.as_str().chars().count() != 1 {
         return Err(Error::MultipleOutputs);
     }
     Ok(Token::SingleOutput {
@@ -251,6 +256,9 @@ fn parse_latch<'a>(cur: &mut Cursor<'a>) -> ParseResult<Token<'a>> {
             // only 1 parameter - must be `init_val`
             init_val = Some(trigger_or_init);
         }
+    }
+    if init_val.is_some_and(|init_val| init_val.as_str().len() != 1) {
+        return Err(Error::MultipleInitValues);
     }
     Ok(Token::Latch {
         span: cur.slice_from(start),
@@ -347,7 +355,8 @@ enum State {
 pub struct Tokenizer<'a> {
     cursor: Cursor<'a>,
     state: State,
-    have_newline: bool,
+    after_newline: bool,
+    pla_description_end: StrSpan<'a>,
 }
 
 impl<'a> Tokenizer<'a> {
@@ -355,7 +364,8 @@ impl<'a> Tokenizer<'a> {
         Self {
             cursor: Cursor::new(input),
             state: State::ModelHeader,
-            have_newline: false,
+            after_newline: false,
+            pla_description_end: StrSpan::empty(),
         }
     }
 
@@ -389,12 +399,20 @@ impl<'a> Tokenizer<'a> {
             }
             ch if is_logic(ch) => {
                 if self.state == State::PlaDescription {
-                    Some(parse_single_output(cur))
+                    let single_output = parse_single_output(cur);
+                    if single_output.is_ok() {
+                        self.pla_description_end = cur.slice_from(cur.pos());
+                    }
+                    Some(single_output)
                 } else {
                     Some(parse_text(cur).map(Token::Text))
                 }
             }
             ch if is_text(ch) => {
+                if self.state == State::PlaDescription {
+                    self.state = State::ModelBody;
+                    return Some(Ok(Token::PlaDescriptionEnd(self.pla_description_end)));
+                }
                 // SAFETY: peeked `ch` is text
                 let text = parse_text(cur).unwrap();
                 match self.state {
@@ -432,9 +450,7 @@ impl<'a> Tokenizer<'a> {
                             self.state = State::ModelHeader;
                             None
                         }
-                        ".inputs" | ".outputs" | ".clock" => {
-                            Some(Err(Error::Unexpected(text.as_str().to_string())))
-                        }
+                        ".inputs" | ".outputs" | ".clock" => Some(Err(unexpected!(text.as_str()))),
                         _ => {
                             if text.as_str().starts_with('.') {
                                 // TODO: looks like command - maybe error?
@@ -443,8 +459,7 @@ impl<'a> Tokenizer<'a> {
                         }
                     },
                     State::PlaDescription => {
-                        self.state = State::ModelBody;
-                        None
+                        unreachable!("state handled above");
                     }
                 }
             }
@@ -464,10 +479,10 @@ impl<'a> Iterator for Tokenizer<'a> {
             token = self.parse_next();
             match token {
                 Some(Ok(Token::Newline(..))) => {
-                    if self.have_newline {
+                    if self.after_newline {
                         token = None;
                     }
-                    self.have_newline = true;
+                    self.after_newline = true;
                 }
                 Some(Ok(Token::Whitespace(..))) => {
                     token = None;

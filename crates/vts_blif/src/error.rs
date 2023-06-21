@@ -2,7 +2,9 @@
 pub enum Error {
     Eof,
     Expected(String),
+    InvalidLatchTrigger,
     InvalidLogicValue,
+    MultipleInitValues,
     MultipleOutputs,
     Unexpected(String),
 }
