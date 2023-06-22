@@ -15,9 +15,17 @@ impl<'a> Cursor<'a> {
         self.pos
     }
 
+    pub fn end(&self) -> usize {
+        self.text.len()
+    }
+
     pub fn set_pos(&mut self, new_pos: usize) {
         debug_assert!(self.text.is_char_boundary(new_pos));
         self.pos = new_pos;
+    }
+
+    pub fn jump_end(&mut self) {
+        self.set_pos(self.end());
     }
 
     pub fn peek(&self) -> Option<char> {
@@ -54,6 +62,10 @@ impl<'a> Cursor<'a> {
         self.slice_until(self.text.len())
     }
 
+    pub fn slice_pos(&self) -> StrSpan<'a> {
+        self.slice_from(self.pos())
+    }
+
     pub fn starts_with(&self, needle: &str) -> bool {
         self.slice_end().as_str().starts_with(needle)
     }
@@ -86,11 +98,7 @@ impl<'a> Cursor<'a> {
         }
     }
 
-    #[allow(dead_code)]
     pub fn find(&self, needle: &StrSpan<'a>) -> Option<(usize, usize)> {
-        if needle.as_str() == "" {
-            return None;
-        }
         let src_ptr = self.text.as_ptr() as usize + self.pos;
         let needle_ptr = needle.as_str().as_ptr() as usize;
         if needle_ptr != src_ptr {

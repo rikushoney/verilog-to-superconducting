@@ -2,6 +2,7 @@ use crate::blifchar::{is_logic, is_space, is_text};
 use crate::cursor::Cursor;
 use crate::error::Error;
 use crate::strspan::StrSpan;
+use crate::Model;
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum Token<'a> {
@@ -50,6 +51,7 @@ pub enum Token<'a> {
         output: StrSpan<'a>,
     },
     Newline(StrSpan<'a>),
+    PlaDescriptionEnd(StrSpan<'a>),
     Search {
         span: StrSpan<'a>,
         filename: StrSpan<'a>,
@@ -59,7 +61,6 @@ pub enum Token<'a> {
         input_plane: StrSpan<'a>,
         output_plane: StrSpan<'a>,
     },
-    PlaDescriptionEnd(StrSpan<'a>),
     Subckt {
         span: StrSpan<'a>,
         model_name: StrSpan<'a>,
@@ -346,6 +347,7 @@ fn parse_search<'a>(cur: &mut Cursor<'a>) -> ParseResult<Token<'a>> {
 
 #[derive(Clone, Copy, PartialEq)]
 enum State {
+    Start,
     ModelHeader,
     ModelParameters,
     ModelBody,
@@ -355,7 +357,7 @@ enum State {
 pub struct Tokenizer<'a> {
     cursor: Cursor<'a>,
     state: State,
-    after_newline: bool,
+    newline_required: bool,
     pla_description_end: StrSpan<'a>,
 }
 
@@ -363,8 +365,8 @@ impl<'a> Tokenizer<'a> {
     pub fn new(input: &'a str) -> Self {
         Self {
             cursor: Cursor::new(input),
-            state: State::ModelHeader,
-            after_newline: false,
+            state: State::Start,
+            newline_required: false,
             pla_description_end: StrSpan::empty(),
         }
     }
@@ -401,7 +403,7 @@ impl<'a> Tokenizer<'a> {
                 if self.state == State::PlaDescription {
                     let single_output = parse_single_output(cur);
                     if single_output.is_ok() {
-                        self.pla_description_end = cur.slice_from(cur.pos());
+                        self.pla_description_end = cur.slice_pos();
                     }
                     Some(single_output)
                 } else {
@@ -413,53 +415,71 @@ impl<'a> Tokenizer<'a> {
                     self.state = State::ModelBody;
                     return Some(Ok(Token::PlaDescriptionEnd(self.pla_description_end)));
                 }
-                // SAFETY: peeked `ch` is text
-                let text = parse_text(cur).unwrap();
                 match self.state {
-                    State::ModelHeader => match text.as_str() {
-                        ".model" => Some(parse_model_header(cur)),
-                        _ => {
+                    State::Start => {
+                        if cur.starts_with(".search") {
+                            Some(parse_search(cur))
+                        } else {
+                            self.state = State::ModelHeader;
+                            None
+                        }
+                    }
+                    State::ModelHeader => {
+                        if cur.starts_with(".model") {
+                            Some(parse_model_header(cur))
+                        } else {
                             self.state = State::ModelParameters;
                             None
                         }
-                    },
-                    State::ModelParameters => match text.as_str() {
-                        ".inputs" => Some(parse_inputs(cur)),
-                        ".outputs" => Some(parse_outputs(cur)),
-                        ".clock" => Some(parse_clock(cur)),
-                        _ => {
+                    }
+                    State::ModelParameters => {
+                        if cur.starts_with(".inputs") {
+                            Some(parse_inputs(cur))
+                        } else if cur.starts_with(".outputs") {
+                            Some(parse_outputs(cur))
+                        } else if cur.starts_with(".clock") {
+                            Some(parse_clock(cur))
+                        } else {
                             self.state = State::ModelBody;
                             None
                         }
-                    },
-                    State::ModelBody => match text.as_str() {
-                        ".end" => {
-                            self.state = State::ModelHeader;
+                    }
+                    State::ModelBody => {
+                        if cur.starts_with(".end") {
+                            self.state = State::Start;
                             Some(parse_end(cur))
-                        }
-                        ".names" => {
+                        } else if cur.starts_with(".names") {
                             self.state = State::PlaDescription;
                             Some(parse_names(cur))
-                        }
-                        ".latch" => Some(parse_latch(cur)),
-                        ".gate" => Some(parse_gate(cur)),
-                        ".mlatch" => Some(parse_mlatch(cur)),
-                        ".subckt" => Some(parse_subckt(cur)),
-                        ".search" => Some(parse_search(cur)),
-                        ".model" => {
+                        } else if cur.starts_with(".latch") {
+                            Some(parse_latch(cur))
+                        } else if cur.starts_with(".gate") {
+                            Some(parse_gate(cur))
+                        } else if cur.starts_with(".mlatch") {
+                            Some(parse_mlatch(cur))
+                        } else if cur.starts_with(".subckt") {
+                            Some(parse_subckt(cur))
+                        } else if cur.starts_with(".search") {
+                            Some(parse_search(cur))
+                        } else if cur.starts_with(".model") {
                             self.state = State::ModelHeader;
-                            None
-                        }
-                        ".inputs" | ".outputs" | ".clock" => Some(Err(unexpected!(text.as_str()))),
-                        _ => {
+                            Some(Ok(Token::End(cur.slice_pos())))
+                        } else if cur.starts_with(".inputs")
+                            || cur.starts_with(".outputs")
+                            || cur.starts_with(".clock")
+                        {
+                            self.state = State::ModelParameters;
+                            Some(Ok(Token::End(cur.slice_pos())))
+                        } else {
+                            let text = parse_text(cur).expect("should be text");
                             if text.as_str().starts_with('.') {
-                                // TODO: looks like command - maybe error?
+                                // TODO: looks like command - maybe error/warning?
                             }
                             Some(Ok(Token::Text(text)))
                         }
-                    },
+                    }
                     State::PlaDescription => {
-                        unreachable!("state handled above");
+                        unreachable!("should be handled separately");
                     }
                 }
             }
@@ -479,15 +499,34 @@ impl<'a> Iterator for Tokenizer<'a> {
             token = self.parse_next();
             match token {
                 Some(Ok(Token::Newline(..))) => {
-                    if self.after_newline {
-                        token = None;
-                    }
-                    self.after_newline = true;
+                    self.newline_required = false;
+                    token = None;
                 }
                 Some(Ok(Token::Whitespace(..))) => {
                     token = None;
                 }
-                _ => {}
+                Some(Ok(Token::PlaDescriptionEnd(..))) => {
+                    // does not require newline
+                    break;
+                }
+                Some(Ok(_)) => {
+                    // could have whitespace right before EOF
+                    self.cursor.skip_whitespace_and_line_continue();
+                    if self.newline_required && !self.cursor.is_eof() {
+                        self.cursor.jump_end();
+                        token = Some(Err(expected!("newline")));
+                    } else {
+                        self.newline_required = true;
+                    }
+                }
+                Some(Err(_)) => {
+                    self.cursor.jump_end();
+                    break;
+                }
+                None => {
+                    // state transition or EOF
+                    continue;
+                }
             }
         }
         token

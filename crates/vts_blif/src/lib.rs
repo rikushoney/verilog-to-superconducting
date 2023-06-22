@@ -8,6 +8,8 @@ mod token;
 use crate::error::Error;
 use crate::token::{Token, Tokenizer};
 
+use std::path;
+
 pub type Signal<'a> = &'a str;
 
 #[derive(Clone, Debug, PartialEq)]
@@ -67,6 +69,10 @@ impl<'a> LogicGate<'a> {
             pla_description: vec![],
         }
     }
+
+    fn is_empty(&self) -> bool {
+        self.inputs.is_empty() && self.output.is_empty() && self.pla_description.is_empty()
+    }
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -117,7 +123,7 @@ pub struct GenericLatch<'a> {
     pub output: Signal<'a>,
     pub trigger: Option<LatchTrigger>,
     pub control: LatchControl<'a>,
-    pub init: LogicValue,
+    pub init_val: LogicValue,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -213,7 +219,11 @@ impl<'a> Model<'a> {
                         .clocks
                         .extend(clock_list.into_iter().map(|clock| clock.as_str()));
                 }
+                Token::End(..) => {
+                    break;
+                }
                 Token::Names { inputs, output, .. } => {
+                    debug_assert!(logic_gate.is_empty());
                     logic_gate
                         .inputs
                         .extend(inputs.into_iter().map(|input| input.as_str()));
@@ -262,7 +272,7 @@ impl<'a> Model<'a> {
                     let control = control.map_or(LatchControl::Global, |control| {
                         LatchControl::from(control.as_str())
                     });
-                    let init = init_val
+                    let init_val = init_val
                         .map(|init_val| {
                             LogicValue::try_from(
                                 init_val
@@ -279,9 +289,17 @@ impl<'a> Model<'a> {
                         output,
                         trigger,
                         control,
-                        init,
+                        init_val,
                     };
                     model.commands.push(Command::GenericLatch(latch));
+                }
+                Token::Search { .. } => {
+                    // TODO: open file and read model... OR
+                    // do not support ".search" since this would require managing
+                    // source files and add a lot of complexity
+                }
+                Token::Newline(..) | Token::Whitespace(..) => {
+                    unreachable!("should be handled by tokenizer");
                 }
                 _ => todo!(),
             }
