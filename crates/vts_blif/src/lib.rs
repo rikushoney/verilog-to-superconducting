@@ -8,8 +8,6 @@ mod token;
 use crate::error::Error;
 use crate::token::{Token, Tokenizer};
 
-use std::path;
-
 pub type Signal<'a> = &'a str;
 
 #[derive(Clone, Debug, PartialEq)]
@@ -180,7 +178,6 @@ pub struct Model<'a> {
     pub name: Option<&'a str>,
     pub inputs: Vec<Signal<'a>>,
     pub outputs: Vec<Signal<'a>>,
-    pub clocks: Vec<Signal<'a>>,
     pub commands: Vec<Command<'a>>,
 }
 
@@ -190,7 +187,6 @@ impl<'a> Model<'a> {
             name: None,
             inputs: vec![],
             outputs: vec![],
-            clocks: vec![],
             commands: vec![],
         }
     }
@@ -213,11 +209,6 @@ impl<'a> Model<'a> {
                     model
                         .outputs
                         .extend(output_list.into_iter().map(|output| output.as_str()));
-                }
-                Token::Clock { clock_list, .. } => {
-                    model
-                        .clocks
-                        .extend(clock_list.into_iter().map(|clock| clock.as_str()));
                 }
                 Token::End(..) => {
                     break;
@@ -292,11 +283,6 @@ impl<'a> Model<'a> {
                         init_val,
                     };
                     model.commands.push(Command::GenericLatch(latch));
-                }
-                Token::Search { .. } => {
-                    // TODO: open file and read model... OR
-                    // do not support ".search" since this would require managing
-                    // source files and add a lot of complexity
                 }
                 Token::Newline(..) | Token::Whitespace(..) => {
                     unreachable!("should be handled by tokenizer");

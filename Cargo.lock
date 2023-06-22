@@ -215,7 +215,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "vts_archfpga"
+name = "vts_archspga"
 version = "0.0.0"
 
 [[package]]
@@ -224,6 +224,10 @@ version = "0.0.0"
 dependencies = [
  "nom",
 ]
+
+[[package]]
+name = "vts_rtlir"
+version = "0.1.0"
 
 [[package]]
 name = "vts_verilog"

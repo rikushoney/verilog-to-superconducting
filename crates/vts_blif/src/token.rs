@@ -15,10 +15,6 @@ pub enum Token<'a> {
         span: StrSpan<'a>,
         output_list: Vec<StrSpan<'a>>,
     },
-    Clock {
-        span: StrSpan<'a>,
-        clock_list: Vec<StrSpan<'a>>,
-    },
     Gate {
         span: StrSpan<'a>,
         name: StrSpan<'a>,
@@ -34,13 +30,6 @@ pub enum Token<'a> {
         control: Option<StrSpan<'a>>,
         init_val: Option<StrSpan<'a>>,
     },
-    MLatch {
-        span: StrSpan<'a>,
-        name: StrSpan<'a>,
-        formal_actual_list: Vec<StrSpan<'a>>,
-        control: StrSpan<'a>,
-        init_val: Option<StrSpan<'a>>,
-    },
     ModelHeader {
         span: StrSpan<'a>,
         model_name: Option<StrSpan<'a>>,
@@ -52,10 +41,6 @@ pub enum Token<'a> {
     },
     Newline(StrSpan<'a>),
     PlaDescriptionEnd(StrSpan<'a>),
-    Search {
-        span: StrSpan<'a>,
-        filename: StrSpan<'a>,
-    },
     SingleOutput {
         span: StrSpan<'a>,
         input_plane: StrSpan<'a>,
@@ -63,7 +48,7 @@ pub enum Token<'a> {
     },
     Subckt {
         span: StrSpan<'a>,
-        model_name: StrSpan<'a>,
+        name: StrSpan<'a>,
         formal_actual_list: Vec<StrSpan<'a>>,
     },
     Text(StrSpan<'a>),
@@ -165,20 +150,6 @@ fn parse_outputs<'a>(cur: &mut Cursor<'a>) -> ParseResult<Token<'a>> {
     })
 }
 
-// Clock ::= '.clock' S+ TextList
-fn parse_clock<'a>(cur: &mut Cursor<'a>) -> ParseResult<Token<'a>> {
-    const CLOCK: &str = ".clock";
-    debug_assert!(cur.starts_with(CLOCK));
-    let start = cur.pos();
-    cur.advance(CLOCK.len());
-    cur.skip_whitespace_and_line_continue();
-    let clock_list = parse_text_list(cur).map_err(|_| expected!("list of clocks"))?;
-    Ok(Token::Clock {
-        span: cur.slice_from(start),
-        clock_list,
-    })
-}
-
 // Names ::= '.names' S+ Text S+ Text (S+ Text)*
 fn parse_names<'a>(cur: &mut Cursor<'a>) -> ParseResult<Token<'a>> {
     const NAMES: &str = ".names";
@@ -271,83 +242,47 @@ fn parse_latch<'a>(cur: &mut Cursor<'a>) -> ParseResult<Token<'a>> {
     })
 }
 
-// Gate ::= '.gate' S+ Text S+ TextList
-fn parse_gate<'a>(cur: &mut Cursor<'a>) -> ParseResult<Token<'a>> {
-    const GATE: &str = ".gate";
-    debug_assert!(cur.starts_with(GATE));
-    let start = cur.pos();
-    cur.advance(GATE.len());
-    cur.skip_whitespace_and_line_continue();
-    let name = parse_text(cur)?;
-    cur.skip_whitespace_and_line_continue();
-    let formal_actual_list = parse_formal_actual_list(cur)?;
-    Ok(Token::Gate {
-        span: cur.slice_from(start),
-        name,
-        formal_actual_list,
-    })
-}
-
-// MLatch ::= '.mlatch' S+ Text S+ FormalActualList S+ Text (S+ Text)?
-fn parse_mlatch<'a>(cur: &mut Cursor<'a>) -> ParseResult<Token<'a>> {
-    const MLATCH: &str = ".mlatch";
-    debug_assert!(cur.starts_with(MLATCH));
-    let start = cur.pos();
-    cur.advance(MLATCH.len());
-    cur.skip_whitespace_and_line_continue();
-    let name = parse_text(cur)?;
-    cur.skip_whitespace_and_line_continue();
-    let formal_actual_list = parse_formal_actual_list(cur)?;
-    cur.skip_whitespace_and_line_continue();
-    let control = parse_text(cur).map_err(|_| expected!("latch control"))?;
-    cur.skip_whitespace_and_line_continue();
-    let init_val = parse_text(cur).ok();
-    Ok(Token::MLatch {
-        span: cur.slice_from(start),
-        name,
-        formal_actual_list,
-        control,
-        init_val,
-    })
-}
-
-// Subckt ::= '.subckt' S+ Text S+ FormalActualList
-fn parse_subckt<'a>(cur: &mut Cursor<'a>) -> ParseResult<Token<'a>> {
+// SubcktOrGate ::= ('.subckt' | '.gate') S+ Text S+ FormalActualList
+fn parse_subckt_or_gate<'a>(cur: &mut Cursor<'a>, is_subckt: bool) -> ParseResult<Token<'a>> {
     const SUBCKT: &str = ".subckt";
-    debug_assert!(cur.starts_with(SUBCKT));
+    const GATE: &str = ".gate";
     let start = cur.pos();
-    cur.advance(SUBCKT.len());
+    if is_subckt {
+        debug_assert!(cur.starts_with(SUBCKT));
+        cur.advance(SUBCKT.len());
+    } else {
+        debug_assert!(cur.starts_with(GATE));
+        cur.advance(GATE.len());
+    }
     cur.skip_whitespace_and_line_continue();
-    let model_name = parse_text(cur)?;
+    let name = parse_text(cur)?;
     cur.skip_whitespace_and_line_continue();
     let formal_actual_list = parse_formal_actual_list(cur)?;
-    Ok(Token::Subckt {
-        span: cur.slice_from(start),
-        model_name,
-        formal_actual_list,
-    })
+    if is_subckt {
+        Ok(Token::Subckt {
+            span: cur.slice_from(start),
+            name,
+            formal_actual_list,
+        })
+    } else {
+        Ok(Token::Gate {
+            span: cur.slice_from(start),
+            name,
+            formal_actual_list,
+        })
+    }
 }
 
-// Search   ::= '.search' S+ Filename
-// Filename ::= [^\n]+
-fn parse_search<'a>(cur: &mut Cursor<'a>) -> ParseResult<Token<'a>> {
-    const SEARCH: &str = ".search";
-    debug_assert!(cur.starts_with(SEARCH));
-    let start = cur.pos();
-    cur.advance(SEARCH.len());
-    cur.skip_whitespace_and_line_continue();
-    let filename_start = cur.pos();
-    cur.skip_while(|ch| ch != '\n');
-    let filename = cur.slice_from(filename_start);
-    Ok(Token::Search {
-        span: cur.slice_from(start),
-        filename,
-    })
+fn parse_subckt<'a>(cur: &mut Cursor<'a>) -> ParseResult<Token<'a>> {
+    parse_subckt_or_gate(cur, true)
+}
+
+fn parse_gate<'a>(cur: &mut Cursor<'a>) -> ParseResult<Token<'a>> {
+    parse_subckt_or_gate(cur, false)
 }
 
 #[derive(Clone, Copy, PartialEq)]
 enum State {
-    Start,
     ModelHeader,
     ModelParameters,
     ModelBody,
@@ -365,7 +300,7 @@ impl<'a> Tokenizer<'a> {
     pub fn new(input: &'a str) -> Self {
         Self {
             cursor: Cursor::new(input),
-            state: State::Start,
+            state: State::ModelHeader,
             newline_required: false,
             pla_description_end: StrSpan::empty(),
         }
@@ -416,14 +351,6 @@ impl<'a> Tokenizer<'a> {
                     return Some(Ok(Token::PlaDescriptionEnd(self.pla_description_end)));
                 }
                 match self.state {
-                    State::Start => {
-                        if cur.starts_with(".search") {
-                            Some(parse_search(cur))
-                        } else {
-                            self.state = State::ModelHeader;
-                            None
-                        }
-                    }
                     State::ModelHeader => {
                         if cur.starts_with(".model") {
                             Some(parse_model_header(cur))
@@ -437,8 +364,6 @@ impl<'a> Tokenizer<'a> {
                             Some(parse_inputs(cur))
                         } else if cur.starts_with(".outputs") {
                             Some(parse_outputs(cur))
-                        } else if cur.starts_with(".clock") {
-                            Some(parse_clock(cur))
                         } else {
                             self.state = State::ModelBody;
                             None
@@ -446,7 +371,7 @@ impl<'a> Tokenizer<'a> {
                     }
                     State::ModelBody => {
                         if cur.starts_with(".end") {
-                            self.state = State::Start;
+                            self.state = State::ModelHeader;
                             Some(parse_end(cur))
                         } else if cur.starts_with(".names") {
                             self.state = State::PlaDescription;
@@ -455,19 +380,12 @@ impl<'a> Tokenizer<'a> {
                             Some(parse_latch(cur))
                         } else if cur.starts_with(".gate") {
                             Some(parse_gate(cur))
-                        } else if cur.starts_with(".mlatch") {
-                            Some(parse_mlatch(cur))
                         } else if cur.starts_with(".subckt") {
                             Some(parse_subckt(cur))
-                        } else if cur.starts_with(".search") {
-                            Some(parse_search(cur))
                         } else if cur.starts_with(".model") {
                             self.state = State::ModelHeader;
                             Some(Ok(Token::End(cur.slice_pos())))
-                        } else if cur.starts_with(".inputs")
-                            || cur.starts_with(".outputs")
-                            || cur.starts_with(".clock")
-                        {
+                        } else if cur.starts_with(".inputs") || cur.starts_with(".outputs") {
                             self.state = State::ModelParameters;
                             Some(Ok(Token::End(cur.slice_pos())))
                         } else {
