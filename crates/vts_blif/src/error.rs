@@ -1,9 +1,10 @@
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Debug)]
 pub enum Error {
     Eof,
     Expected(String),
     InvalidLatchTrigger,
     InvalidLogicValue,
+    IoError(std::io::Error),
     MultipleInitValues,
     MultipleOutputs,
     Unexpected(String),

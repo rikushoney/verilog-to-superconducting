@@ -1,4 +1,3 @@
-use crate::blifchar::is_space;
 use crate::strspan::StrSpan;
 
 pub struct Cursor<'a> {
@@ -83,19 +82,6 @@ impl<'a> Cursor<'a> {
             .take_while(|&ch| pred(ch))
             .fold(0, |count, ch| count + ch.len_utf8());
         self.advance(skip_count);
-    }
-
-    pub fn skip_whitespace_and_line_continue(&mut self) {
-        loop {
-            self.skip_while(is_space);
-            if self.starts_with("\\\n") {
-                self.advance(2);
-            } else if self.starts_with("\\\r\n") {
-                self.advance(3);
-            } else {
-                break;
-            }
-        }
     }
 
     pub fn find(&self, needle: &StrSpan<'a>) -> Option<(usize, usize)> {

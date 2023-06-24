@@ -223,11 +223,16 @@ name = "vts_blif"
 version = "0.0.0"
 dependencies = [
  "nom",
+ "vts_shared",
 ]
 
 [[package]]
 name = "vts_rtlir"
-version = "0.1.0"
+version = "0.0.0"
+
+[[package]]
+name = "vts_shared"
+version = "0.0.0"
 
 [[package]]
 name = "vts_verilog"
