@@ -341,12 +341,7 @@ fn parse_latch<'a>(cur: &mut Cursor<'a>) -> ParseResult<Token<'a>> {
         }
     }
     if let Some(trig) = trigger.map(|trigger| trigger.as_str()) {
-        if !trig.starts_with("fe")
-            || !trig.starts_with("re")
-            || !trig.starts_with("ah")
-            || !trig.starts_with("al")
-            || !trig.starts_with("as")
-        {
+        if !matches!(trig, "fe" | "re" | "ah" | "al" | "as") {
             return Err(Error::InvalidLatchTrigger);
         }
     }
@@ -581,7 +576,6 @@ impl<'a> Iterator for Tokenizer<'a> {
                     // could have whitespace right before EOF
                     skip_whitespace_and_line_continue(&mut self.cursor);
                     if self.newline_required && !self.cursor.is_eof() {
-                        println!("rest: |{}|", self.cursor.chars().as_str());
                         self.cursor.jump_end();
                         token = Some(Err(expected!("newline")));
                     } else {

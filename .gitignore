@@ -2,3 +2,4 @@
 examples/**/_build
 *.vcd
 .svlangserver/
+.vscode/

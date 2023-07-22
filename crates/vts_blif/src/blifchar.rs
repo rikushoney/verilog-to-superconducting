@@ -3,7 +3,7 @@ pub fn is_space(ch: char) -> bool {
 }
 
 pub fn is_text(ch: char) -> bool {
-    !(is_space(ch) || ch == '#')
+    !(is_space(ch) || ch == '\n' || ch == '#')
 }
 
 pub fn is_logic(ch: char) -> bool {
