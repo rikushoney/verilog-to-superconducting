@@ -3,11 +3,15 @@ use crate::error::Error;
 use vts_shared::cursor::Cursor;
 use vts_shared::strspan::StrSpan;
 
+/// A `Token` is roughly a single line in a BLIF file. Each kind of token contains a `StrSpan`
+/// spanning the entire parsed token and fields spanning the individual parsed parts.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Token<'a> {
     End {
         // .end
         // ^^^^ - span
+        // if '.end' is implied (at the end of file or the start of a new model) then `span` is
+        // empty but contains the position right after the last command
         span: StrSpan<'a>,
     },
     Inputs {
@@ -78,7 +82,7 @@ pub enum Token<'a> {
     PlaDescriptionEnd {
         // 00 1
         //     | - span
-        // span here is empty but points to right after the PLA description
+        // `span` is empty but points to right after the PLA description
         span: StrSpan<'a>,
     },
     SingleOutput {
@@ -112,6 +116,26 @@ pub enum Token<'a> {
     },
 }
 
+// impl<'a> Token<'a> {
+//     pub fn span(&self) -> &StrSpan<'a> {
+//         match self {
+//             Token::End { span, .. } => span,
+//             Token::Inputs { span, .. } => span,
+//             Token::Outputs { span, .. } => span,
+//             Token::Gate { span, .. } => span,
+//             Token::Latch { span, .. } => span,
+//             Token::ModelHeader { span, .. } => span,
+//             Token::Names { span, .. } => span,
+//             Token::Newline { span, .. } => span,
+//             Token::PlaDescriptionEnd { span, .. } => span,
+//             Token::SingleOutput { span, .. } => span,
+//             Token::Subckt { span, .. } => span,
+//             Token::Text { span, .. } => span,
+//             Token::Whitespace { span, .. } => span,
+//         }
+//     }
+// }
+
 // WSLC ::= ('\t' | '\r' | ' ' | '\\\n' | '\\\r\n')*
 fn skip_whitespace_and_line_continue(cur: &mut Cursor) {
     loop {
@@ -144,9 +168,10 @@ fn parse_text<'a>(cur: &mut Cursor<'a>) -> ParseResult<StrSpan<'a>> {
 fn parse_text_list<'a>(cur: &mut Cursor<'a>) -> ParseResult<Vec<StrSpan<'a>>> {
     let first = parse_text(cur).map_err(|_| expected!("text list"))?;
     let mut text_list = vec![first];
+    skip_whitespace_and_line_continue(cur);
     while let Ok(text) = parse_text(cur) {
-        skip_whitespace_and_line_continue(cur);
         text_list.push(text);
+        skip_whitespace_and_line_continue(cur);
     }
     Ok(text_list)
 }
@@ -163,9 +188,10 @@ fn parse_formal_actual<'a>(cur: &mut Cursor<'a>) -> ParseResult<StrSpan<'a>> {
 fn parse_formal_actual_list<'a>(cur: &mut Cursor<'a>) -> ParseResult<Vec<StrSpan<'a>>> {
     let first = parse_formal_actual(cur)?;
     let mut formal_actual_list = vec![first];
+    skip_whitespace_and_line_continue(cur);
     while let Ok(formal_actual) = parse_formal_actual(cur) {
-        skip_whitespace_and_line_continue(cur);
         formal_actual_list.push(formal_actual);
+        skip_whitespace_and_line_continue(cur);
     }
     Ok(formal_actual_list)
 }
@@ -195,32 +221,42 @@ fn parse_model_header<'a>(cur: &mut Cursor<'a>) -> ParseResult<Token<'a>> {
     })
 }
 
+// InputsOrOutputs ::= Inputs | Outputs
+fn parse_inputs_or_outputs<'a>(cur: &mut Cursor<'a>, is_inputs: bool) -> ParseResult<Token<'a>> {
+    const INPUTS: &str = ".inputs";
+    const OUTPUTS: &str = ".outputs";
+    let start = cur.pos();
+    if is_inputs {
+        debug_assert!(cur.starts_with(INPUTS));
+        cur.advance(INPUTS.len());
+    } else {
+        debug_assert!(cur.starts_with(OUTPUTS));
+        cur.advance(OUTPUTS.len());
+    }
+    skip_whitespace_and_line_continue(cur);
+    let signal_list = parse_text_list(cur)
+        .map_err(|_| expected!("list of {}", if is_inputs { "inputs" } else { "outputs" }))?;
+    if is_inputs {
+        Ok(Token::Inputs {
+            span: cur.slice_from(start),
+            input_list: signal_list,
+        })
+    } else {
+        Ok(Token::Outputs {
+            span: cur.slice_from(start),
+            output_list: signal_list,
+        })
+    }
+}
+
 // Inputs ::= '.inputs' S+ TextList
 fn parse_inputs<'a>(cur: &mut Cursor<'a>) -> ParseResult<Token<'a>> {
-    const INPUTS: &str = ".inputs";
-    debug_assert!(cur.starts_with(INPUTS));
-    let start = cur.pos();
-    cur.advance(INPUTS.len());
-    skip_whitespace_and_line_continue(cur);
-    let input_list = parse_text_list(cur).map_err(|_| expected!("list of inputs"))?;
-    Ok(Token::Inputs {
-        span: cur.slice_from(start),
-        input_list,
-    })
+    parse_inputs_or_outputs(cur, /*is_inputs =*/ true)
 }
 
 // Outputs ::= '.outputs' S+ TextList
 fn parse_outputs<'a>(cur: &mut Cursor<'a>) -> ParseResult<Token<'a>> {
-    const OUTPUTS: &str = ".outputs";
-    debug_assert!(cur.starts_with(OUTPUTS));
-    let start = cur.pos();
-    cur.advance(OUTPUTS.len());
-    skip_whitespace_and_line_continue(cur);
-    let output_list = parse_text_list(cur).map_err(|_| expected!("list of outputs"))?;
-    Ok(Token::Outputs {
-        span: cur.slice_from(start),
-        output_list,
-    })
+    parse_inputs_or_outputs(cur, /*is_inputs =*/ false)
 }
 
 // Names ::= '.names' S+ Text S+ Text (S+ Text)*
@@ -273,7 +309,9 @@ fn parse_single_output<'a>(cur: &mut Cursor<'a>) -> ParseResult<Token<'a>> {
     })
 }
 
-// Latch ::= '.latch' S+ Text S+ Text (S+ Text S+ Text)? (S+ Text)?
+// Latch ::= '.latch' S+ Text S+ Text (S+ LatchTrigger S+ Text)? (S+ LatchInit)?
+// LatchTrigger ::= 'fe' | 're' | 'ah' | 'al' | 'as'
+// LatchInit ::= [0-3]
 fn parse_latch<'a>(cur: &mut Cursor<'a>) -> ParseResult<Token<'a>> {
     const LATCH: &str = ".latch";
     debug_assert!(cur.starts_with(LATCH));
@@ -302,6 +340,16 @@ fn parse_latch<'a>(cur: &mut Cursor<'a>) -> ParseResult<Token<'a>> {
             init_val = Some(trigger_or_init);
         }
     }
+    if let Some(trig) = trigger.map(|trigger| trigger.as_str()) {
+        if !trig.starts_with("fe")
+            || !trig.starts_with("re")
+            || !trig.starts_with("ah")
+            || !trig.starts_with("al")
+            || !trig.starts_with("as")
+        {
+            return Err(Error::InvalidLatchTrigger);
+        }
+    }
     if let Some(ref init) = init_val {
         if init.as_str().len() != 1 {
             return Err(Error::MultipleInitValues);
@@ -324,6 +372,7 @@ fn parse_latch<'a>(cur: &mut Cursor<'a>) -> ParseResult<Token<'a>> {
     })
 }
 
+// SubcktOrGate ::= Subckt | Gate
 fn parse_subckt_or_gate<'a>(cur: &mut Cursor<'a>, is_subckt: bool) -> ParseResult<Token<'a>> {
     const SUBCKT: &str = ".subckt";
     const GATE: &str = ".gate";
@@ -356,22 +405,30 @@ fn parse_subckt_or_gate<'a>(cur: &mut Cursor<'a>, is_subckt: bool) -> ParseResul
 
 // Subckt ::= '.subckt' S+ Text S+ FormalActualList
 fn parse_subckt<'a>(cur: &mut Cursor<'a>) -> ParseResult<Token<'a>> {
-    parse_subckt_or_gate(cur, /*is_subckt = */ true)
+    parse_subckt_or_gate(cur, /*is_subckt =*/ true)
 }
 
 // Gate ::= '.gate' S+ Text S+ FormalActualList
 fn parse_gate<'a>(cur: &mut Cursor<'a>) -> ParseResult<Token<'a>> {
-    parse_subckt_or_gate(cur, /*is_subckt = */ false)
+    parse_subckt_or_gate(cur, /*is_subckt =*/ false)
 }
 
-#[derive(Clone, Copy, PartialEq)]
+/// The current state of the `Tokenizer`.
+#[derive(Clone, Copy, Debug, PartialEq)]
 enum State {
+    /// The starting state
     ModelHeader,
+    /// The state in which the model inputs and outputs are listed
     ModelParameters,
+    /// The state in which commands are specified
     ModelBody,
+    /// The state after a '.names' command
     PlaDescription,
 }
 
+/// A `Token` iterator. Guarentees that tokens appear in the correct order and are
+/// syntactically correct.
+#[derive(Clone, Debug, PartialEq)]
 pub struct Tokenizer<'a> {
     cursor: Cursor<'a>,
     state: State,
@@ -389,6 +446,9 @@ impl<'a> Tokenizer<'a> {
         }
     }
 
+    /// Parse the next token from the input. Returns `None` if a state transition occurs, a comment
+    /// or line continue ('\') is encountered or when the end of input is reached. End of file
+    /// should be checked using `Cursor::is_eof`
     fn parse_next(&mut self) -> Option<ParseResult<Token<'a>>> {
         let cur = &mut self.cursor;
         let ch = cur.peek()?;
@@ -432,13 +492,8 @@ impl<'a> Tokenizer<'a> {
                     Some(parse_text(cur).map(|text| Token::Text { span: text }))
                 }
             }
-            ch if is_text(ch) => {
-                if self.state == State::PlaDescription {
-                    self.state = State::ModelBody;
-                    return Some(Ok(Token::PlaDescriptionEnd {
-                        span: self.pla_description_end,
-                    }));
-                }
+            _ => {
+                debug_assert!(is_text(ch));
                 match self.state {
                     State::ModelHeader => {
                         if cur.starts_with(".model") {
@@ -490,12 +545,12 @@ impl<'a> Tokenizer<'a> {
                         }
                     }
                     State::PlaDescription => {
-                        unreachable!("should be handled separately");
+                        self.state = State::ModelBody;
+                        Some(Ok(Token::PlaDescriptionEnd {
+                            span: self.pla_description_end,
+                        }))
                     }
                 }
-            }
-            _ => {
-                unreachable!("unhandled characters are considered text")
             }
         }
     }
@@ -504,6 +559,8 @@ impl<'a> Tokenizer<'a> {
 impl<'a> Iterator for Tokenizer<'a> {
     type Item = ParseResult<Token<'a>>;
 
+    /// Parse the next token from the input. Stops when the end of input is reached or when an
+    /// error occurs while parsing.
     fn next(&mut self) -> Option<Self::Item> {
         let mut token = None;
         while !self.cursor.is_eof() && token.is_none() {
@@ -524,6 +581,7 @@ impl<'a> Iterator for Tokenizer<'a> {
                     // could have whitespace right before EOF
                     skip_whitespace_and_line_continue(&mut self.cursor);
                     if self.newline_required && !self.cursor.is_eof() {
+                        println!("rest: |{}|", self.cursor.chars().as_str());
                         self.cursor.jump_end();
                         token = Some(Err(expected!("newline")));
                     } else {

@@ -31,22 +31,6 @@ impl LogicValue {
     }
 }
 
-impl TryFrom<char> for LogicValue {
-    type Error = Error;
-
-    fn try_from(ch: char) -> Result<Self, Self::Error> {
-        Ok(match ch {
-            '0' => LogicValue::Zero,
-            '1' => LogicValue::One,
-            '2' | '-' => LogicValue::DontCare,
-            '3' => LogicValue::Unknown,
-            _ => {
-                return Err(Error::InvalidLogicValue);
-            }
-        })
-    }
-}
-
 #[derive(Clone, Debug, PartialEq)]
 pub struct SingleOutput {
     pub inputs: Vec<LogicValue>,
@@ -107,20 +91,18 @@ pub enum LatchTrigger {
     Asynchronous,
 }
 
-impl TryFrom<&str> for LatchTrigger {
-    type Error = Error;
-
-    fn try_from(text: &str) -> Result<Self, Self::Error> {
-        Ok(match text {
+impl LatchTrigger {
+    fn from_unchecked(text: &str) -> Self {
+        match text {
             "fe" => Self::FallingEdge,
             "re" => Self::RisingEdge,
             "ah" => Self::ActiveHigh,
             "al" => Self::ActiveLow,
             "as" => Self::Asynchronous,
             _ => {
-                return Err(Error::InvalidLatchTrigger);
+                unreachable!("should be checked by tokenizer")
             }
-        })
+        }
     }
 }
 
@@ -185,13 +167,11 @@ impl<'a> From<(&'a str, &'a str)> for FormalActual<'a> {
     }
 }
 
-impl<'a> TryFrom<&'a str> for FormalActual<'a> {
-    type Error = crate::error::Error;
-
-    fn try_from(text: &'a str) -> Result<Self, Self::Error> {
+impl<'a> FormalActual<'a> {
+    fn from_unchecked(text: &'a str) -> Self {
         text.split_once('=')
-            .map(|formal_actual| formal_actual.into())
-            .ok_or(expected!("formal=actual"))
+            .expect("should be checked by tokenizer")
+            .into()
     }
 }
 
@@ -269,9 +249,7 @@ fn process_names<'a>(
     output: StrSpan<'a>,
 ) {
     debug_assert!(logic_gate.is_empty());
-    logic_gate
-        .inputs
-        .extend(inputs.into_iter().map(|input| input.as_str()));
+    logic_gate.inputs = inputs.into_iter().map(|input| input.as_str()).collect();
     logic_gate.output = output.as_str();
 }
 
@@ -287,12 +265,12 @@ fn process_single_output<'a>(
         // SAFETY: checked by tokenizer
         .map(LogicValue::from_unchecked)
         .collect();
-    // SAFETY: checked by tokenizer
     let output = LogicValue::from_unchecked(
         output_plane
             .as_str()
             .chars()
             .next()
+            // SAFETY: checked by tokenizer
             .expect("should be checked by tokenizer"),
     );
     logic_gate
@@ -312,29 +290,29 @@ fn process_latch<'a>(
     trigger: Option<StrSpan<'a>>,
     control: Option<StrSpan<'a>>,
     init_val: Option<StrSpan<'a>>,
-) -> Result<(), Error> {
+) {
+    debug_assert!(
+        (trigger.is_some() && control.is_some()) || (trigger.is_none() && control.is_none())
+    );
     let input = input.as_str();
     let output = output.as_str();
     let control = match Option::zip(trigger, control) {
         Some((trigger, control)) => {
-            let trigger = LatchTrigger::try_from(trigger.as_str())?;
+            let trigger = LatchTrigger::from_unchecked(trigger.as_str());
             let clock = LatchControlKind::from(control.as_str());
             Some(LatchControl { clock, trigger })
         }
         None => None,
     };
-    let init_val = init_val
-        .map(|init_val| {
-            LogicValue::try_from(
-                init_val
-                    .as_str()
-                    .chars()
-                    .next()
-                    .expect("should be checked by tokenizer"),
-            )
-        })
-        .transpose()?
-        .unwrap_or(LogicValue::Unknown);
+    let init_val = init_val.map_or(LogicValue::Unknown, |init_val| {
+        LogicValue::from_unchecked(
+            init_val
+                .as_str()
+                .chars()
+                .next()
+                .expect("should be checked by tokenizer"),
+        )
+    });
     let latch = GenericLatch {
         input,
         output,
@@ -342,7 +320,6 @@ fn process_latch<'a>(
         init_val,
     };
     model.commands.push(Command::GenericLatch(latch));
-    Ok(())
 }
 
 fn process_gate<'a>(
@@ -353,9 +330,7 @@ fn process_gate<'a>(
     let name = name.as_str();
     let formal_actual_list = formal_actual_list
         .into_iter()
-        .map(|formal_actual| {
-            FormalActual::try_from(formal_actual.as_str()).expect("should be checked by tokenizer")
-        })
+        .map(|formal_actual| FormalActual::from_unchecked(formal_actual.as_str()))
         .collect();
     let gate = LibraryGate {
         name,
@@ -372,9 +347,7 @@ fn process_subckt<'a>(
     let name = name.as_str();
     let formal_actual_list = formal_actual_list
         .into_iter()
-        .map(|formal_actual| {
-            FormalActual::try_from(formal_actual.as_str()).expect("should be checked by tokenizer")
-        })
+        .map(|formal_actual| FormalActual::from_unchecked(formal_actual.as_str()))
         .collect();
     let model_reference = ModelReference {
         name,
@@ -408,6 +381,7 @@ impl<'a> Model<'a> {
         }
     }
 
+    /// Populate a model with the tokens coming from the tokenizer.
     fn parse(tokens: &mut Tokenizer<'a>) -> Result<Self, Error> {
         let mut model = Self::empty();
         let mut logic_gate = LogicGate::empty();
@@ -447,7 +421,7 @@ impl<'a> Model<'a> {
                     init_val,
                     ..
                 } => {
-                    process_latch(&mut model, input, output, trigger, control, init_val)?;
+                    process_latch(&mut model, input, output, trigger, control, init_val);
                 }
                 Token::Gate {
                     name,
@@ -475,11 +449,13 @@ impl<'a> Model<'a> {
     }
 }
 
+/// Parse a single model from the input.
 pub fn parse_model(input: &str) -> Result<Model<'_>, Error> {
     let mut tokens = Tokenizer::new(input);
     Model::parse(&mut tokens)
 }
 
+/// Parse multiple models (a circuit) from the input.
 pub fn parse_circuit(input: &str) -> Result<Vec<Model<'_>>, Error> {
     let mut tokens = Tokenizer::new(input);
     let first = Model::parse(&mut tokens)?;
@@ -498,4 +474,70 @@ pub fn parse_circuit(input: &str) -> Result<Vec<Model<'_>>, Error> {
         }
     }
     Ok(models)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_parse_empty() {
+        assert_eq!(parse_model(".model").unwrap(), Model::empty());
+    }
+
+    #[test]
+    fn test_parse_and2() {
+        assert_eq!(
+            parse_model(
+                r#".model and2
+.inputs a b
+.outputs c
+.names a b c
+11 1
+.end"#
+            )
+            .unwrap(),
+            Model {
+                name: Some("and2"),
+                inputs: vec!["a", "b"],
+                outputs: vec!["c"],
+                commands: vec![Command::LogicGate(LogicGate {
+                    inputs: vec!["a", "b"],
+                    output: "c",
+                    pla_description: vec![SingleOutput {
+                        inputs: vec![LogicValue::One, LogicValue::One],
+                        output: LogicValue::One
+                    }]
+                })]
+            }
+        );
+    }
+
+    #[test]
+    fn test_parse_flip_flop() {
+        assert_eq!(
+            parse_model(
+                r#".model flip_flop
+.inputs d clk
+.outputs q
+.latch d q re clk
+.end"#
+            )
+            .unwrap(),
+            Model {
+                name: Some("flip_flop"),
+                inputs: vec!["d", "clk"],
+                outputs: vec!["q"],
+                commands: vec![Command::GenericLatch(GenericLatch {
+                    input: "d",
+                    output: "q",
+                    control: Some(LatchControl {
+                        clock: LatchControlKind::Clock("clk"),
+                        trigger: LatchTrigger::RisingEdge
+                    }),
+                    init_val: LogicValue::Unknown
+                })]
+            }
+        );
+    }
 }
