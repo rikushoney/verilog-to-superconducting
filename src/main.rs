@@ -32,7 +32,6 @@ fn main() {
                     .collect();
                 let filenames = files_to_check.join(", ");
                 eprintln!("Checking {filenames}...");
-                return;
             }
         }
         _ => unreachable!(),

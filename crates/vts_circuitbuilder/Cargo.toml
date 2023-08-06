@@ -1,0 +1,11 @@
+[package]
+name = "vts_circuitbuilder"
+version = "0.0.0"
+edition = "2021"
+
+[[bin]]
+name = "circuitbuilder"
+path = "main.rs"
+
+[dependencies]
+derive_builder = { path = "builder" }
