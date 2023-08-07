@@ -11,6 +11,10 @@ impl<'a> StrRef<'a> {
         Self::Counted(s.into())
     }
 
+    pub fn new_ref<S: AsRef<str>>(s: &'a S) -> Self {
+        Self::Ref(s.as_ref())
+    }
+
     pub fn as_str(&self) -> &str {
         match self {
             Self::Counted(s) => s,
@@ -106,5 +110,18 @@ mod tests {
         let s_ref = StrRef::new_counted(s);
         assert!(matches!(s_ref, StrRef::Counted(..)));
         assert_eq!(s_ptr, s_ref.as_ptr());
+    }
+
+    #[test]
+    fn test_new_ref() {
+        let s = "test1";
+        let s_ref = StrRef::new_ref(&s);
+        assert!(matches!(s_ref, StrRef::Ref(..)));
+        assert_eq!(s.as_ptr(), s_ref.as_ptr());
+
+        let s = "test2".to_string();
+        let s_ref = StrRef::new_ref(&s);
+        assert!(matches!(s_ref, StrRef::Ref(..)));
+        assert_eq!(s.as_ptr(), s_ref.as_ptr());
     }
 }
