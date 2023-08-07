@@ -3,9 +3,7 @@ name = "vts_circuitbuilder"
 version = "0.0.0"
 edition = "2021"
 
-[[bin]]
-name = "circuitbuilder"
-path = "main.rs"
-
 [dependencies]
-derive_builder = { path = "builder" }
+derive_builder = "0.12.0"
+uuid = { version = "1.4.1", features = ["v4", "fast-rng"] }
+vts_shared = { path = "../vts_shared" }
