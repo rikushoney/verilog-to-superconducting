@@ -1,11 +1,11 @@
-use std::{ops::Deref, sync::Arc};
+use std::{ops::Deref, slice, sync::Arc};
 
 use uuid::Uuid;
 
 use vts_shared::strref::StrRef;
 
 /// A port for a component
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct Port<'a> {
     pub name: StrRef<'a>,
     /// The port's width in terms of pin count
@@ -23,9 +23,10 @@ impl<'a> Port<'a> {
 }
 
 /// An owned component
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct Component<'a> {
     pub name: StrRef<'a>,
+    pub children: Vec<ComponentRef<'a>>,
     pub ports: Vec<Port<'a>>,
 }
 
@@ -34,6 +35,7 @@ impl<'a> Component<'a> {
     pub fn new<S: Into<StrRef<'a>>>(name: S) -> Self {
         Self {
             name: name.into(),
+            children: Vec::new(),
             ports: Vec::new(),
         }
     }
@@ -81,6 +83,16 @@ impl<'a> Component<'a> {
         }
     }
 
+    /// Get an iterator over the child components of this component
+    pub fn children(&self) -> slice::Iter<'_, ComponentRef<'_>> {
+        self.children.iter()
+    }
+
+    /// Get an iterator over the ports of this component
+    pub fn ports(&self) -> slice::Iter<'_, Port<'_>> {
+        self.ports.iter()
+    }
+
     /// Turn this component into a reference counted component
     pub fn make_ref(self) -> ComponentRef<'a> {
         ComponentRef::new(self)
@@ -88,10 +100,11 @@ impl<'a> Component<'a> {
 }
 
 /// A reference to a component
+#[derive(Clone, Debug, PartialEq)]
 pub struct ComponentRef<'a>(Arc<Component<'a>>);
 
 impl<'a> ComponentRef<'a> {
-    /// Turn `c` into a reference counted component
+    /// Create a reference counted component consuming the original component
     pub fn new(c: Component<'a>) -> Self {
         Self(Arc::new(c))
     }
@@ -105,9 +118,87 @@ impl<'a> Deref for ComponentRef<'a> {
     }
 }
 
+impl<'a> Extend<ComponentRef<'a>> for Component<'a> {
+    fn extend<T: IntoIterator<Item = ComponentRef<'a>>>(&mut self, iter: T) {
+        self.children.extend(iter);
+    }
+}
+
+impl<'a> Extend<Port<'a>> for Component<'a> {
+    fn extend<T: IntoIterator<Item = Port<'a>>>(&mut self, iter: T) {
+        self.ports.extend(iter);
+    }
+}
+
+pub struct ComponentBuilder<'a> {
+    name: Option<StrRef<'a>>,
+    children: Vec<ComponentRef<'a>>,
+    ports: Vec<Port<'a>>,
+}
+
+impl<'a> ComponentBuilder<'a> {
+    pub fn new() -> Self {
+        Self {
+            name: None,
+            children: Vec::new(),
+            ports: Vec::new(),
+        }
+    }
+
+    pub fn name<S: Into<StrRef<'a>>>(mut self, name: S) -> Self {
+        self.name = Some(name.into());
+        self
+    }
+
+    pub fn child(mut self, c: ComponentRef<'a>) -> Self {
+        self.children.push(c);
+        self
+    }
+
+    pub fn children<I: IntoIterator<Item = ComponentRef<'a>>>(mut self, iter: I) -> Self {
+        self.children.extend(iter);
+        self
+    }
+
+    pub fn port(mut self, port: Port<'a>) -> Self {
+        self.ports.push(port);
+        self
+    }
+
+    pub fn ports<I: IntoIterator<Item = Port<'a>>>(mut self, iter: I) -> Self {
+        self.ports.extend(iter);
+        self
+    }
+
+    pub fn build(self) -> Component<'a> {
+        let mut c = match self.name {
+            Some(name) => Component::new(name),
+            None => Component::with_uuid(),
+        };
+        c.extend(self.children.into_iter());
+        c.extend(self.ports.into_iter());
+        c
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_componentref() {
+        let test1 = ComponentBuilder::new().name("test1").build();
+        assert_eq!(test1.name, "test1");
+
+        let test2 = ComponentBuilder::new()
+            .name("test2")
+            .ports([Port::new("a", 1), Port::new("b", 2)])
+            .child(test1.make_ref())
+            .build()
+            .make_ref();
+        assert_eq!(test2.children().count(), 1);
+        assert_eq!(test2.ports().count(), 2);
+    }
 
     #[test]
     fn test_uuid() {
