@@ -1,8 +1,60 @@
-use std::{ops::Deref, slice, sync::Arc};
+use std::{collections::HashMap, ops::Deref, slice, sync::Arc};
 
 use uuid::Uuid;
 
 use vts_shared::strref::StrRef;
+
+/// The supported number formats
+#[derive(Clone, Copy, Debug, PartialEq, PartialOrd)]
+pub enum Number {
+    Int(i64),
+    Float(f64),
+}
+
+impl From<i64> for Number {
+    fn from(value: i64) -> Self {
+        Self::Int(value)
+    }
+}
+
+impl From<f64> for Number {
+    fn from(value: f64) -> Self {
+        Self::Float(value)
+    }
+}
+
+/// The supported value types of component properties
+#[derive(Clone, Debug, PartialEq)]
+pub enum Value {
+    Null,
+    Bool(bool),
+    Number(Number),
+    String(String),
+    Array(Vec<Value>),
+    Object(HashMap<String, Value>),
+}
+
+macro_rules! impl_from_value {
+    ($variant:ident, $builtin:ty) => {
+        impl From<$builtin> for Value {
+            fn from(value: $builtin) -> Self {
+                Value::$variant(value)
+            }
+        }
+    };
+}
+
+impl_from_value!(Bool, bool);
+impl_from_value!(Number, Number);
+impl_from_value!(String, String);
+impl_from_value!(Array, Vec<Value>);
+impl_from_value!(Object, HashMap<String, Value>);
+
+impl From<()> for Value {
+    fn from(_: ()) -> Self {
+        Self::Null
+    }
+}
 
 fn unnamed_uuid() -> String {
     let uuid = Uuid::new_v4();
@@ -104,6 +156,7 @@ pub struct Component<'a> {
     pub name: StrRef<'a>,
     pub children: Vec<ComponentRef<'a>>,
     pub ports: Vec<PortRef<'a>>,
+    pub parameters: HashMap<String, Value>,
 }
 
 impl<'a> Component<'a> {
@@ -113,6 +166,7 @@ impl<'a> Component<'a> {
             name: name.into(),
             children: Vec::new(),
             ports: Vec::new(),
+            parameters: HashMap::new(),
         }
     }
 
@@ -149,6 +203,10 @@ impl<'a> Component<'a> {
     /// Get an iterator over the ports of this component
     pub fn ports(&self) -> slice::Iter<'_, PortRef<'_>> {
         self.ports.iter()
+    }
+
+    pub fn parameter(&self, key: &str) -> Option<&Value> {
+        self.parameters.get(key)
     }
 
     /// Turn this component into a reference counted component
@@ -188,11 +246,18 @@ impl<'a> Extend<PortRef<'a>> for Component<'a> {
     }
 }
 
+impl<'a> Extend<(String, Value)> for Component<'a> {
+    fn extend<T: IntoIterator<Item = (String, Value)>>(&mut self, iter: T) {
+        self.parameters.extend(iter);
+    }
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct ComponentBuilder<'a> {
     name: Option<StrRef<'a>>,
     children: Vec<ComponentRef<'a>>,
     ports: Vec<Port<'a>>,
+    parameters: HashMap<String, Value>,
 }
 
 impl<'a> ComponentBuilder<'a> {
@@ -201,6 +266,7 @@ impl<'a> ComponentBuilder<'a> {
             name: None,
             children: Vec::new(),
             ports: Vec::new(),
+            parameters: HashMap::new(),
         }
     }
 
@@ -229,6 +295,21 @@ impl<'a> ComponentBuilder<'a> {
         self
     }
 
+    pub fn parameter<S: Into<String>>(mut self, key: S, val: Value) -> Self {
+        self.parameters.insert(key.into(), val);
+        self
+    }
+
+    pub fn parameters<S, I>(mut self, iter: I) -> Self
+    where
+        S: Into<StrRef<'a>>,
+        I: IntoIterator<Item = (String, Value)>,
+    {
+        self.parameters
+            .extend(iter.into_iter().map(|(key, value)| (key.into(), value)));
+        self
+    }
+
     pub fn build(self) -> Component<'a> {
         let mut c = match self.name {
             Some(name) => Component::new(name),
@@ -236,6 +317,7 @@ impl<'a> ComponentBuilder<'a> {
         };
         c.extend(self.children.into_iter());
         c.extend(self.ports.into_iter().map(|p| p.make_ref()));
+        c.extend(self.parameters.into_iter());
         c
     }
 }
@@ -277,5 +359,24 @@ mod tests {
         let c = Component::new("Unnamed_aaa");
         assert_eq!(check_unnamed_and_length(&c.name), (true, false));
         assert!(c.uuid().is_none());
+    }
+
+    #[test]
+    fn test_component_properties() {
+        let c = ComponentBuilder::new()
+            .name("test1")
+            .parameter("param".to_string(), Value::Null)
+            .build();
+        assert_eq!(c.parameter("param").unwrap(), &Value::Null);
+
+        // TODO:
+        // let c = ComponentBuilder::new()
+        //     .name("test2")
+        //     .parameters([
+        //         ("param".to_string(), Value::Null),
+        //         ("other".to_string(), Value::from(Number::from(1))),
+        //     ])
+        //     .build();
+        // assert_eq!(c.parameter("param").unwrap(), &Value::Null);
     }
 }
