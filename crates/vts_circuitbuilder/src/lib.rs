@@ -4,6 +4,30 @@ use uuid::Uuid;
 
 use vts_shared::strref::StrRef;
 
+fn unnamed_uuid() -> String {
+    let uuid = Uuid::new_v4();
+    format!(
+        "Unnamed_{}",
+        uuid.simple().encode_lower(&mut Uuid::encode_buffer())
+    )
+}
+
+fn check_unnamed_and_length(name: &StrRef) -> (bool, bool) {
+    (
+        name.starts_with("Unnamed_"),
+        name.len() == "Unnamed_".len() + 32,
+    )
+}
+
+fn extract_uuid(name: &StrRef) -> Option<Uuid> {
+    let (unnamed, len_good) = check_unnamed_and_length(name);
+    if unnamed && len_good {
+        Uuid::try_parse(&name["Unnamed_".len()..]).ok()
+    } else {
+        None
+    }
+}
+
 /// A port for a component
 #[derive(Clone, Debug, PartialEq)]
 pub struct Port<'a> {
@@ -20,6 +44,58 @@ impl<'a> Port<'a> {
             width,
         }
     }
+
+    /// Create a new, reference counted, port with `name` and `width`
+    pub fn new_rc<S: Into<StrRef<'a>>>(name: S, width: usize) -> PortRef<'a> {
+        PortRef::new(Self::new(name, width))
+    }
+
+    /// Create a new unnamed port with `width` and a unique identifier
+    pub fn with_uuid(width: usize) -> Self {
+        Self {
+            name: unnamed_uuid().into(),
+            width,
+        }
+    }
+
+    /// Create a new, unnamed, reference counted port with `width` and a unique identifier
+    pub fn with_uuid_rc(width: usize) -> PortRef<'a> {
+        PortRef::new(Self::with_uuid(width))
+    }
+
+    /// Check if the port was created unnamed
+    pub fn is_unnamed(&self) -> bool {
+        check_unnamed_and_length(&self.name).0
+    }
+
+    /// Extract the unique identifier from the port name
+    pub fn uuid(&self) -> Option<Uuid> {
+        extract_uuid(&self.name)
+    }
+
+    /// Turn this port into a reference counted port
+    pub fn make_ref(self) -> PortRef<'a> {
+        PortRef::new(self)
+    }
+}
+
+/// A counted reference to a port
+#[derive(Clone, Debug, PartialEq)]
+pub struct PortRef<'a>(Arc<Port<'a>>);
+
+impl<'a> PortRef<'a> {
+    /// Create a new reference counted port by consuming the original port
+    pub fn new(port: Port<'a>) -> Self {
+        Self(Arc::new(port))
+    }
+}
+
+impl<'a> Deref for PortRef<'a> {
+    type Target = Port<'a>;
+
+    fn deref(&self) -> &Self::Target {
+        self.0.deref()
+    }
 }
 
 /// An owned component
@@ -27,7 +103,7 @@ impl<'a> Port<'a> {
 pub struct Component<'a> {
     pub name: StrRef<'a>,
     pub children: Vec<ComponentRef<'a>>,
-    pub ports: Vec<Port<'a>>,
+    pub ports: Vec<PortRef<'a>>,
 }
 
 impl<'a> Component<'a> {
@@ -47,12 +123,7 @@ impl<'a> Component<'a> {
 
     /// Create a new, unnamed, empty component with a unique identifier
     pub fn with_uuid() -> Self {
-        let uuid = Uuid::new_v4();
-        let name = format!(
-            "Unnamed_{}",
-            uuid.simple().encode_lower(&mut Uuid::encode_buffer())
-        );
-        Self::new(name)
+        Self::new(unnamed_uuid())
     }
 
     /// Create a new, unnamed, reference counted, empty component with a unique identifier
@@ -60,27 +131,14 @@ impl<'a> Component<'a> {
         ComponentRef::new(Self::with_uuid())
     }
 
-    /// Check if the component starts with "Unnamed_" and long enough to hold a unique identifier
-    fn check_unnamed_and_length(&self) -> (bool, bool) {
-        (
-            self.name.starts_with("Unnamed_"),
-            self.name.len() == "Unnamed_".len() + 32,
-        )
-    }
-
     /// Check if the component was created unnamed
     pub fn is_unnamed(&self) -> bool {
-        self.check_unnamed_and_length().0
+        check_unnamed_and_length(&self.name).0
     }
 
     /// Extract the unique identifier from the component name
     pub fn uuid(&self) -> Option<Uuid> {
-        let (unnamed, len_good) = self.check_unnamed_and_length();
-        if unnamed && len_good {
-            Uuid::try_parse(&self.name["Unnamed_".len()..]).ok()
-        } else {
-            None
-        }
+        extract_uuid(&self.name)
     }
 
     /// Get an iterator over the child components of this component
@@ -89,7 +147,7 @@ impl<'a> Component<'a> {
     }
 
     /// Get an iterator over the ports of this component
-    pub fn ports(&self) -> slice::Iter<'_, Port<'_>> {
+    pub fn ports(&self) -> slice::Iter<'_, PortRef<'_>> {
         self.ports.iter()
     }
 
@@ -99,7 +157,7 @@ impl<'a> Component<'a> {
     }
 }
 
-/// A reference to a component
+/// A counted reference to a component
 #[derive(Clone, Debug, PartialEq)]
 pub struct ComponentRef<'a>(Arc<Component<'a>>);
 
@@ -124,12 +182,13 @@ impl<'a> Extend<ComponentRef<'a>> for Component<'a> {
     }
 }
 
-impl<'a> Extend<Port<'a>> for Component<'a> {
-    fn extend<T: IntoIterator<Item = Port<'a>>>(&mut self, iter: T) {
+impl<'a> Extend<PortRef<'a>> for Component<'a> {
+    fn extend<T: IntoIterator<Item = PortRef<'a>>>(&mut self, iter: T) {
         self.ports.extend(iter);
     }
 }
 
+#[derive(Clone, Debug, PartialEq)]
 pub struct ComponentBuilder<'a> {
     name: Option<StrRef<'a>>,
     children: Vec<ComponentRef<'a>>,
@@ -176,7 +235,7 @@ impl<'a> ComponentBuilder<'a> {
             None => Component::with_uuid(),
         };
         c.extend(self.children.into_iter());
-        c.extend(self.ports.into_iter());
+        c.extend(self.ports.into_iter().map(|p| p.make_ref()));
         c
     }
 }
@@ -212,11 +271,11 @@ mod tests {
             "Unnamed_{}",
             uuid.simple().encode_lower(&mut Uuid::encode_buffer())
         ));
-        assert_eq!(c.check_unnamed_and_length(), (true, true));
+        assert_eq!(check_unnamed_and_length(&c.name), (true, true));
         assert_eq!(c.uuid().unwrap(), uuid);
 
         let c = Component::new("Unnamed_aaa");
-        assert_eq!(c.check_unnamed_and_length(), (true, false));
+        assert_eq!(check_unnamed_and_length(&c.name), (true, false));
         assert!(c.uuid().is_none());
     }
 }
