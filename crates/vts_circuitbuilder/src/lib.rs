@@ -1,3 +1,5 @@
+mod formats;
+
 use std::{collections::HashMap as Map, ops::Deref, slice, sync::Arc};
 
 use uuid::Uuid;
