@@ -106,3 +106,32 @@ impl<'de> Visitor<'de> for ValueVisitor {
         Ok(Value::Object(o))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_deserialize_json() {
+        let value = Value::Object(Map::from([("test".to_string(), 123.into())]));
+        let output = serde_json::to_value(value).unwrap();
+        assert_eq!(output, serde_json::json!({"test": 123}));
+    }
+
+    #[test]
+    fn test_deserialize_yaml() {
+        let value = Value::Object(Map::from([("test".to_string(), 123.into())]));
+        let output = serde_yaml::to_value(value).unwrap();
+        assert_eq!(
+            output,
+            serde_yaml::from_str::<serde_yaml::Value>("test: 123").unwrap()
+        );
+    }
+
+    #[test]
+    fn test_deserialize_toml() {
+        let value = Value::Object(Map::from([("test".to_string(), 123.into())]));
+        let output = toml::Table::try_from(value).unwrap();
+        assert_eq!(output, toml::toml!(test = 123));
+    }
+}
