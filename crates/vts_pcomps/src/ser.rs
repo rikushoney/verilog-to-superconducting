@@ -13,16 +13,16 @@ impl Serialize for Value {
             Self::Number(Number::Int(i)) => serializer.serialize_i64(*i),
             Self::Number(Number::Float(f)) => serializer.serialize_f64(*f),
             Self::String(s) => serializer.serialize_str(&s),
-            Self::Array(a) => {
-                let mut seq = serializer.serialize_seq(Some(a.len()))?;
-                for i in a.into_iter() {
+            Self::List(list) => {
+                let mut seq = serializer.serialize_seq(Some(list.len()))?;
+                for i in list.into_iter() {
                     seq.serialize_element(i)?;
                 }
                 seq.end()
             }
-            Self::Object(o) => {
-                let mut map = serializer.serialize_map(Some(o.len()))?;
-                for (k, v) in o.into_iter() {
+            Self::Dict(dict) => {
+                let mut map = serializer.serialize_map(Some(dict.len()))?;
+                for (k, v) in dict.into_iter() {
                     map.serialize_entry(k, v)?;
                 }
                 map.end()
@@ -41,7 +41,7 @@ mod tests {
         let value: Value = serde_json::from_value(input).unwrap();
         assert_eq!(
             value,
-            Value::Object(Map::from([("test".to_string(), 123.into())]))
+            Value::Dict(Dict::from([("test".to_string(), 123.into())]))
         );
     }
 
@@ -51,7 +51,7 @@ mod tests {
         let value: Value = serde_yaml::from_str(input).unwrap();
         assert_eq!(
             value,
-            Value::Object(Map::from([("test".to_string(), 123.into())]))
+            Value::Dict(Dict::from([("test".to_string(), 123.into())]))
         );
     }
 
@@ -61,7 +61,7 @@ mod tests {
         let value: Value = input.try_into().unwrap();
         assert_eq!(
             value,
-            Value::Object(Map::from([("test".to_string(), 123.into())]))
+            Value::Dict(Dict::from([("test".to_string(), 123.into())]))
         );
     }
 }

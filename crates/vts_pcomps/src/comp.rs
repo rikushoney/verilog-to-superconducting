@@ -106,7 +106,7 @@ pub struct Component<'a> {
     pub name: StrRef<'a>,
     pub children: Vec<ComponentRef<'a>>,
     pub ports: Vec<PortRef<'a>>,
-    pub parameters: param::Map,
+    pub parameters: param::Dict,
 }
 
 impl<'a> Component<'a> {
@@ -116,7 +116,7 @@ impl<'a> Component<'a> {
             name: name.into(),
             children: Vec::new(),
             ports: Vec::new(),
-            parameters: param::Map::new(),
+            parameters: param::Dict::new(),
         }
     }
 
@@ -208,7 +208,7 @@ pub struct ComponentBuilder<'a> {
     name: Option<StrRef<'a>>,
     children: Vec<ComponentRef<'a>>,
     ports: Vec<Port<'a>>,
-    parameters: param::Map,
+    parameters: param::Dict,
 }
 
 impl<'a> ComponentBuilder<'a> {
@@ -217,7 +217,7 @@ impl<'a> ComponentBuilder<'a> {
             name: None,
             children: Vec::new(),
             ports: Vec::new(),
-            parameters: param::Map::new(),
+            parameters: param::Dict::new(),
         }
     }
 

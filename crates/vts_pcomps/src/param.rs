@@ -46,7 +46,46 @@ impl TryFrom<u64> for Number {
     }
 }
 
-pub type Map = HashMap<String, Value>;
+macro_rules! impl_number_eq {
+    ($variant:ident, $base:ty, $($prim:ty),*) => {
+        $(
+            impl PartialEq<$prim> for Number {
+                fn eq(&self, x: &$prim) -> bool {
+                    match self {
+                        Number::$variant(y) => (*x as $base).eq(y),
+                        _ => false,
+                    }
+                }
+            }
+
+            impl PartialEq<Number> for $prim {
+                fn eq(&self, x: &Number) -> bool {
+                    x.eq(self)
+                }
+            }
+        )*
+    };
+}
+
+impl_number_eq!(Int, i64, i8, u8, i16, u16, i32, u32, i64);
+impl_number_eq!(Float, f64, f32, f64);
+
+impl PartialEq<u64> for Number {
+    fn eq(&self, x: &u64) -> bool {
+        match self {
+            Number::Int(y) => i64::try_from(*x).map_or(false, |x| x.eq(y)),
+            _ => false,
+        }
+    }
+}
+
+impl PartialEq<Number> for u64 {
+    fn eq(&self, x: &Number) -> bool {
+        x.eq(self)
+    }
+}
+
+pub type Dict = HashMap<String, Value>;
 
 /// The supported value types of component parameters
 #[derive(Clone, Debug, PartialEq)]
@@ -55,8 +94,8 @@ pub enum Value {
     Bool(bool),
     Number(Number),
     String(String),
-    Array(Vec<Value>),
-    Object(Map),
+    List(Vec<Value>),
+    Dict(Dict),
 }
 
 macro_rules! impl_value_as {
@@ -82,8 +121,8 @@ impl Value {
     impl_value_as!(as_bool, Bool, bool);
     impl_value_as!(as_number, Number, Number);
     impl_value_as!(as_string, String, &str);
-    impl_value_as!(as_array, Array, &Vec<Value>);
-    impl_value_as!(as_object, Object, &Map);
+    impl_value_as!(as_list, List, &Vec<Value>);
+    impl_value_as!(as_dict, Dict, &Dict);
 
     pub fn as_unit(&self) -> Option<()> {
         match self {
@@ -119,8 +158,8 @@ macro_rules! impl_value_from {
 
 impl_value_from!(Bool, bool);
 impl_value_from!(String, String);
-impl_value_from!(Array, Vec<Value>);
-impl_value_from!(Object, Map);
+impl_value_from!(List, Vec<Value>);
+impl_value_from!(Dict, Dict);
 
 impl From<()> for Value {
     fn from(_: ()) -> Self {
@@ -149,20 +188,26 @@ impl From<&str> for Value {
 }
 
 impl<const N: usize> From<[(String, Value); N]> for Value {
-    fn from(a: [(String, Value); N]) -> Self {
-        Self::Object(a.into())
+    fn from(dict: [(String, Value); N]) -> Self {
+        Self::Dict(dict.into())
+    }
+}
+
+impl<const N: usize> From<[Value; N]> for Value {
+    fn from(list: [Value; N]) -> Self {
+        Self::List(list.into())
     }
 }
 
 impl<T: Into<Value>> FromIterator<T> for Value {
     fn from_iter<I: IntoIterator<Item = T>>(iter: I) -> Self {
-        Self::Array(iter.into_iter().map(|x| x.into()).collect())
+        Self::List(iter.into_iter().map(|x| x.into()).collect())
     }
 }
 
 impl<S: Into<String>, V: Into<Value>> FromIterator<(S, V)> for Value {
     fn from_iter<I: IntoIterator<Item = (S, V)>>(iter: I) -> Self {
-        Self::Object(Map::from_iter(
+        Self::Dict(Dict::from_iter(
             iter.into_iter().map(|(s, v)| (s.into(), v.into())),
         ))
     }
@@ -172,17 +217,17 @@ impl Index<usize> for Value {
     type Output = Value;
 
     fn index(&self, idx: usize) -> &Self::Output {
-        self.as_array().expect("should be an array").index(idx)
+        self.as_list().expect("should be a list").index(idx)
     }
 }
 
 impl IndexMut<usize> for Value {
     fn index_mut(&mut self, idx: usize) -> &mut Self::Output {
         let a = match self {
-            Self::Array(a) => Some(a),
+            Self::List(a) => Some(a),
             _ => None,
         };
-        a.expect("should be an array").index_mut(idx)
+        a.expect("should be a list").index_mut(idx)
     }
 }
 
@@ -190,18 +235,61 @@ impl Index<&str> for Value {
     type Output = Value;
 
     fn index(&self, key: &str) -> &Self::Output {
-        self.as_object().expect("should be an object").index(key)
+        self.as_dict().expect("should be a dictionary").index(key)
     }
 }
 
 impl IndexMut<&str> for Value {
     fn index_mut(&mut self, key: &str) -> &mut Self::Output {
         let o = match self {
-            Self::Object(o) => Some(o),
+            Self::Dict(o) => Some(o),
             _ => None,
         };
-        o.expect("should be an object")
+        o.expect("should be a dictionary")
             .get_mut(key)
             .expect("key not in map")
+    }
+}
+
+#[macro_export]
+macro_rules! param {
+    ($value:expr) => {
+        Value::from($value)
+    };
+    ($($value:expr),*) => {
+        Value::from([$(param!($value)),*])
+    };
+    ($($key:literal : $value:expr),*) => {
+        Value::from([$((String::from($key), param!($value))),*])
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_param_macro() {
+        let value = param!(23);
+        assert_eq!(value.as_number().unwrap(), 23);
+
+        let value = param!("test");
+        assert_eq!(value.as_string().unwrap(), "test");
+
+        let value = param!["a", 1, true];
+        let mut iter = value.as_list().unwrap().iter();
+        assert_eq!(iter.next().unwrap().as_string().unwrap(), "a");
+        assert_eq!(iter.next().unwrap().as_number().unwrap(), 1);
+        assert_eq!(iter.next().unwrap().as_bool().unwrap(), true);
+
+        let value = param! {
+            "width": 12.0,
+            "height": 15.0,
+            "test": true
+        };
+        let dict = value.as_dict().unwrap();
+        assert_eq!(dict.get("width").unwrap().as_number().unwrap(), 12.0);
+        assert_eq!(dict.get("height").unwrap().as_number().unwrap(), 15.0);
+        assert_eq!(dict.get("test").unwrap().as_bool().unwrap(), true);
     }
 }
