@@ -51,6 +51,16 @@ impl<'a> Cursor<'a> {
         self.advance(1);
     }
 
+    pub fn consume(&mut self, c: char) -> Option<char> {
+        if let Some(ch) = self.peek() {
+            if ch == c {
+                self.advance(c.len_utf8());
+                return self.peek();
+            }
+        }
+        None
+    }
+
     /// Check if the position is at the end
     pub fn is_eof(&self) -> bool {
         self.pos == self.text.len()
@@ -83,6 +93,10 @@ impl<'a> Cursor<'a> {
     /// Check if the current position starts with `needle`
     pub fn starts_with(&self, needle: &str) -> bool {
         self.slice_end().as_str().starts_with(needle)
+    }
+
+    pub fn starts_with_ignore_case(&self, needle: &str) -> bool {
+        self.slice_end().as_str().eq_ignore_ascii_case(needle)
     }
 
     /// Get an iterator over the characters from the current position

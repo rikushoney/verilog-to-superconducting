@@ -513,6 +513,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "vts_lefdef"
+version = "0.0.0"
+dependencies = [
+ "vts_shared",
+]
+
+[[package]]
 name = "vts_pcomps"
 version = "0.0.0"
 dependencies = [
