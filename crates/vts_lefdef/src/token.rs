@@ -7,6 +7,30 @@ macro_rules! keyword {
     (VERSION) => {
         "VERSION"
     };
+    (BUSBITCHARS) => {
+        "BUSBITCHARS"
+    };
+    (DIVIDERCHAR) => {
+        "DIVIDERCHAR"
+    };
+    (UNITS) => {
+        "UNITS"
+    };
+    (END) => {
+        "END"
+    };
+    (DATABASE) => {
+        "DATABASE"
+    };
+    (MICRONS) => {
+        "MICRONS"
+    };
+}
+
+macro_rules! match_keyword {
+    ($cur:ident, $name:ident) => {
+        $cur.starts_with_ignore_case(keyword!($name))
+    };
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -19,6 +43,24 @@ pub enum Token<'a> {
         major: StrSpan<'a>,
         minor: StrSpan<'a>,
         sub_minor: Option<StrSpan<'a>>,
+    },
+    BusBitChars {
+        span: StrSpan<'a>,
+        chars: StrSpan<'a>,
+    },
+    DividerChar {
+        span: StrSpan<'a>,
+        ch: StrSpan<'a>,
+    },
+    BeginUnits {
+        span: StrSpan<'a>,
+    },
+    EndUnits {
+        span: StrSpan<'a>,
+    },
+    DatabaseMicrons {
+        span: StrSpan<'a>,
+        factor: StrSpan<'a>,
     },
 }
 
@@ -62,6 +104,10 @@ fn parse_version<'a>(cur: &mut Cursor<'a>) -> ParseResult<Token<'a>> {
     if cur.consume('.').is_some() {
         sub_minor = Some(parse_int(cur)?);
     }
+    skip_whitespace(cur);
+    if cur.consume(';').is_none() {
+        return Err(expected!(";"));
+    }
     Ok(Token::Version {
         span: cur.slice_from(start),
         major,
@@ -98,6 +144,81 @@ fn parse_quoted_string<'a>(cur: &mut Cursor<'a>) -> ParseResult<StrSpan<'a>> {
     Err(expected!("a printable character"))
 }
 
+fn parse_bus_bit_chars<'a>(cur: &mut Cursor<'a>) -> ParseResult<Token<'a>> {
+    debug_assert!(cur.starts_with(keyword!(BUSBITCHARS)));
+    let start = cur.pos();
+    cur.advance(keyword!(BUSBITCHARS).len());
+    skip_whitespace(cur);
+    let chars = parse_quoted_string(cur)?;
+    if chars.as_str().chars().count() != 2 {
+        return Err(expected!("a pair of chars"));
+    }
+    Ok(Token::BusBitChars {
+        span: cur.slice_from(start),
+        chars,
+    })
+}
+
+fn parse_divider_char<'a>(cur: &mut Cursor<'a>) -> ParseResult<Token<'a>> {
+    debug_assert!(cur.starts_with(keyword!(DIVIDERCHAR)));
+    let start = cur.pos();
+    cur.advance(keyword!(DIVIDERCHAR).len());
+    skip_whitespace(cur);
+    let ch = parse_quoted_string(cur)?;
+    if ch.as_str().chars().count() != 1 {
+        return Err(expected!("a char"));
+    }
+    Ok(Token::DividerChar {
+        span: cur.slice_from(start),
+        ch,
+    })
+}
+
+fn parse_begin_units<'a>(cur: &mut Cursor<'a>) -> ParseResult<Token<'a>> {
+    debug_assert!(cur.starts_with(keyword!(UNITS)));
+    let start = cur.pos();
+    cur.advance(keyword!(UNITS).len());
+    Ok(Token::BeginUnits {
+        span: cur.slice_from(start),
+    })
+}
+
+fn parse_end_units<'a>(cur: &mut Cursor<'a>) -> ParseResult<Token<'a>> {
+    debug_assert!(cur.starts_with(keyword!(END)));
+    let start = cur.pos();
+    cur.advance(keyword!(END).len());
+    skip_whitespace(cur);
+    if !cur.starts_with(keyword!(UNITS)) {
+        return Err(expected!(keyword!(UNITS)));
+    }
+    cur.advance(keyword!(UNITS).len());
+    Ok(Token::EndUnits {
+        span: cur.slice_from(start),
+    })
+}
+
+fn parse_units_statement<'a>(
+    cur: &mut Cursor<'a>,
+    entry: &'static str,
+    units: &'static str,
+) -> ParseResult<Token<'a>> {
+    debug_assert!(cur.starts_with(entry));
+    let start = cur.pos();
+    cur.advance(entry.len());
+    skip_whitespace(cur);
+    if !(cur.starts_with(units)) {
+        return Err(expected!(units));
+    }
+    cur.advance(units.len());
+    skip_whitespace(cur);
+    let factor = parse_int(cur)?;
+    skip_whitespace(cur);
+    if cur.consume(';').is_none() {
+        return Err(expected!(";"));
+    }
+    todo!()
+}
+
 impl<'a> Tokenizer<'a> {
     pub fn new(input: &'a str) -> Self {
         Self {
@@ -110,17 +231,27 @@ impl<'a> Tokenizer<'a> {
         let ch = cur.peek()?;
         let start = cur.pos();
         match ch {
-            '\\' => {
-                // TODO: parse escaped characters
-                todo!()
-            }
-            '\"' => {
-                let inside_quotes = parse_quoted_string(cur);
-                todo!()
-            }
             ch if is_ident(ch) => {
-                if cur.starts_with_ignore_case(keyword!(VERSION)) {
+                if match_keyword!(cur, VERSION) {
                     Some(parse_version(cur))
+                } else if match_keyword!(cur, BUSBITCHARS) {
+                    Some(parse_bus_bit_chars(cur))
+                } else if match_keyword!(cur, DIVIDERCHAR) {
+                    Some(parse_divider_char(cur))
+                } else if match_keyword!(cur, END) {
+                    if let Ok(token) = parse_end_units(cur) {
+                        Some(Ok(token))
+                    } else {
+                        todo!()
+                    }
+                } else if match_keyword!(cur, DATABASE) {
+                    if let Ok(token) =
+                        parse_units_statement(cur, keyword!(DATABASE), keyword!(MICRONS))
+                    {
+                        Some(Ok(token))
+                    } else {
+                        todo!()
+                    }
                 } else {
                     let ident = parse_ident(cur);
                     todo!()
