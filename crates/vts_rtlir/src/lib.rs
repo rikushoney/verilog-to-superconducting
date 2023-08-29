@@ -1,4 +1,5 @@
-use std::collections::HashMap;
+use fnv::FnvHashMap;
+
 use std::rc::Rc;
 
 /// A reference to a identifier, short for "identifier string"
@@ -97,7 +98,7 @@ pub type Connection<'a> = (SigSpec<'a>, SigSpec<'a>);
 /// interconnected.
 pub struct Module<'a> {
     pub name: IdStr<'a>,
-    pub wires: HashMap<IdStr<'a>, Wire<'a>>,
-    pub cells: HashMap<IdStr<'a>, Cell<'a>>,
+    pub wires: FnvHashMap<IdStr<'a>, Wire<'a>>,
+    pub cells: FnvHashMap<IdStr<'a>, Cell<'a>>,
     pub connections: Vec<Connection<'a>>,
 }

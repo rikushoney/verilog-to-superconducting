@@ -1,4 +1,5 @@
-use std::collections::HashMap;
+use fnv::FnvHashMap;
+
 use std::num::TryFromIntError;
 use std::ops::{Index, IndexMut};
 
@@ -85,7 +86,7 @@ impl PartialEq<Number> for u64 {
     }
 }
 
-pub type Dict = HashMap<String, Value>;
+pub type Dict = FnvHashMap<String, Value>;
 
 /// The supported value types of component parameters
 #[derive(Clone, Debug, PartialEq)]
@@ -189,7 +190,11 @@ impl From<&str> for Value {
 
 impl<const N: usize> From<[(String, Value); N]> for Value {
     fn from(dict: [(String, Value); N]) -> Self {
-        Self::Dict(dict.into())
+        let mut d = FnvHashMap::with_capacity_and_hasher(dict.len(), Default::default());
+        for (k, v) in dict.into_iter() {
+            d.insert(k, v);
+        }
+        Self::Dict(d)
     }
 }
 
@@ -278,9 +283,9 @@ mod tests {
 
         let value = param!["a", 1, true];
         let mut iter = value.as_list().unwrap().iter();
-        assert_eq!(iter.next().unwrap().as_string().unwrap(), "a");
-        assert_eq!(iter.next().unwrap().as_number().unwrap(), 1);
-        assert_eq!(iter.next().unwrap().as_bool().unwrap(), true);
+        assert_eq!(iter.next(), Some(&param!("a")));
+        assert_eq!(iter.next(), Some(&param!(1)));
+        assert_eq!(iter.next(), Some(&param!(true)));
 
         let value = param! {
             "width": 12.0,
@@ -288,8 +293,8 @@ mod tests {
             "test": true
         };
         let dict = value.as_dict().unwrap();
-        assert_eq!(dict.get("width").unwrap().as_number().unwrap(), 12.0);
-        assert_eq!(dict.get("height").unwrap().as_number().unwrap(), 15.0);
-        assert_eq!(dict.get("test").unwrap().as_bool().unwrap(), true);
+        assert_eq!(dict.get("width"), Some(&param!(12.0)));
+        assert_eq!(dict.get("height"), Some(&param!(15.0)));
+        assert_eq!(dict.get("test"), Some(&param!(true)));
     }
 }

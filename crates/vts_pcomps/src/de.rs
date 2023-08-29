@@ -97,8 +97,8 @@ impl<'de> Visitor<'de> for ValueVisitor {
         A: MapAccess<'de>,
     {
         let mut dict = match map.size_hint() {
-            Some(n) => Dict::with_capacity(n),
-            None => Dict::new(),
+            Some(n) => Dict::with_capacity_and_hasher(n, Default::default()),
+            None => Dict::default(),
         };
         while let Some((k, v)) = map.next_entry()? {
             dict.insert(k, v);
@@ -113,14 +113,14 @@ mod tests {
 
     #[test]
     fn test_deserialize_json() {
-        let value = Value::Dict(Dict::from([("test".to_string(), 123.into())]));
+        let value = param! {"test": 123};
         let output = serde_json::to_value(value).unwrap();
         assert_eq!(output, serde_json::json!({"test": 123}));
     }
 
     #[test]
     fn test_deserialize_yaml() {
-        let value = Value::Dict(Dict::from([("test".to_string(), 123.into())]));
+        let value = param! {"test": 123};
         let output = serde_yaml::to_value(value).unwrap();
         assert_eq!(
             output,
@@ -130,7 +130,7 @@ mod tests {
 
     #[test]
     fn test_deserialize_toml() {
-        let value = Value::Dict(Dict::from([("test".to_string(), 123.into())]));
+        let value = param! {"test": 123};
         let output = toml::Table::try_from(value).unwrap();
         assert_eq!(output, toml::toml!(test = 123));
     }

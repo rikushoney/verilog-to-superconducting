@@ -39,29 +39,20 @@ mod tests {
     fn test_serialize_json() {
         let input = serde_json::json!({"test": 123});
         let value: Value = serde_json::from_value(input).unwrap();
-        assert_eq!(
-            value,
-            Value::Dict(Dict::from([("test".to_string(), 123.into())]))
-        );
+        assert_eq!(value, param! {"test": 123});
     }
 
     #[test]
     fn test_serialize_yaml() {
         let input = "test: 123";
         let value: Value = serde_yaml::from_str(input).unwrap();
-        assert_eq!(
-            value,
-            Value::Dict(Dict::from([("test".to_string(), 123.into())]))
-        );
+        assert_eq!(value, param! {"test": 123});
     }
 
     #[test]
     fn test_serialize_toml() {
         let input = toml::toml!(test = 123);
         let value: Value = input.try_into().unwrap();
-        assert_eq!(
-            value,
-            Value::Dict(Dict::from([("test".to_string(), 123.into())]))
-        );
+        assert_eq!(value, param! {"test": 123});
     }
 }

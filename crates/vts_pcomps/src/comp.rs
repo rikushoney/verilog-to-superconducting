@@ -116,7 +116,7 @@ impl<'a> Component<'a> {
             name: name.into(),
             children: Vec::new(),
             ports: Vec::new(),
-            parameters: param::Dict::new(),
+            parameters: param::Dict::default(),
         }
     }
 
@@ -217,7 +217,7 @@ impl<'a> ComponentBuilder<'a> {
             name: None,
             children: Vec::new(),
             ports: Vec::new(),
-            parameters: param::Dict::new(),
+            parameters: param::Dict::default(),
         }
     }
 
@@ -276,6 +276,7 @@ impl<'a> ComponentBuilder<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::Value;
 
     #[test]
     fn test_componentref() {
@@ -305,7 +306,7 @@ mod tests {
             uuid.simple().encode_lower(&mut Uuid::encode_buffer())
         ));
         assert_eq!(check_unnamed_and_length(&c.name), (true, true));
-        assert_eq!(c.uuid().unwrap(), uuid);
+        assert_eq!(c.uuid(), Some(uuid));
 
         let c = Component::new("Unnamed_aaa");
         assert_eq!(check_unnamed_and_length(&c.name), (true, false));
@@ -316,18 +317,15 @@ mod tests {
     fn test_component_parameters() {
         let c = ComponentBuilder::new()
             .name("test1")
-            .parameter("param".to_string(), param::Value::Unit)
+            .parameter("param", param!(()))
             .build();
-        assert_eq!(c.parameter("param").unwrap(), &param::Value::Unit);
+        assert_eq!(c.parameter("param"), Some(&param!(())));
 
         let c = ComponentBuilder::new()
             .name("test2")
-            .parameters([
-                ("param", param::Value::Unit),
-                ("other", param::Value::from(param::Number::from(1))),
-            ])
+            .parameters([("param", param!(())), ("other", param!(1))])
             .build();
-        assert_eq!(c.parameter("param").unwrap(), &param::Value::Unit);
-        assert_eq!(c.parameter("other").unwrap(), &param::Value::from(1));
+        assert_eq!(c.parameter("param"), Some(&param!(())));
+        assert_eq!(c.parameter("other"), Some(&param!(1)));
     }
 }

@@ -524,6 +524,7 @@ name = "vts_pcomps"
 version = "0.0.0"
 dependencies = [
  "derive_builder",
+ "fnv",
  "serde",
  "serde_json",
  "serde_yaml",
@@ -535,6 +536,9 @@ dependencies = [
 [[package]]
 name = "vts_rtlir"
 version = "0.0.0"
+dependencies = [
+ "fnv",
+]
 
 [[package]]
 name = "vts_shared"
