@@ -1,3 +1,4 @@
 [submodule "pdks/rsfq_mitll_pdk"]
 	path = pdks/rsfq_mitll_pdk
 	url = https://github.com/rikushoney/rsfq_mitll_pdk.git
+	shallow = true
