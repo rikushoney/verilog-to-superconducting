@@ -36,13 +36,7 @@ fn main() {
     .unwrap();
     cfg.include(dst.to_str().unwrap());
 
-    cfg.define("_YOSYS_", "1")
-        .define("YOSYS_ENABLE_COVER", "0")
-        .define("YOSYS_ENABLE_GLOB", "0")
-        .define("YOSYS_ENABLE_PLUGINS", "0")
-        .define("YOSYS_ENABLE_READLINE", "0")
-        .define("YOSYS_ENABLE_TCL", "0")
-        .define("YOSYS_ENABLE_ZLIB", "0");
+    cfg.define("_YOSYS_", "1");
 
     cfg.file("src/yosys/kernel/binding.cc")
         .file("src/yosys/kernel/calc.cc")
