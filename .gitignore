@@ -3,3 +3,5 @@ examples/**/_build
 *.vcd
 .svlangserver/
 .vscode/
+tmp/
+build/
