@@ -2,10 +2,3 @@
 	path = pdks/rsfq_mitll_pdk
 	url = https://github.com/rikushoney/rsfq_mitll_pdk.git
 	shallow = true
-[submodule "crates/yosys-sys/src/yosys"]
-	path = crates/yosys-sys/src/yosys
-	url = https://github.com/YosysHQ/yosys
-[submodule "crates/yosys-sys/src/abc"]
-	path = crates/yosys-sys/src/abc
-	url = https://github.com/YosysHQ/abc
-	branch = yosys-experimental

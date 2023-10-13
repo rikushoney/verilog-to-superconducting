@@ -9,6 +9,9 @@ testbench: testbench.sv _build alu4.sv
 simulate: testbench
 	vvp _build/$(<F)
 
+synth:
+	yosys synth.ys
+
 clean:
 	rm -r _build alu_testbench_dump.vcd
 

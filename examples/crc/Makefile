@@ -9,6 +9,9 @@ testbench: testbench.sv _build crc8.sv crc16.sv
 simulate: testbench
 	vvp _build/$(<F)
 
+synth:
+	yosys synth.ys
+
 clean:
 	rm -r _build crc_testbench_dump.vcd
 

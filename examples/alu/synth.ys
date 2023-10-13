@@ -1,0 +1,13 @@
+read_verilog -sv add4.sv
+opt; proc; opt
+
+write_json add4.json
+write_rtlil add4.rtlil
+
+delete add4
+
+read_verilog -sv alu4.sv
+opt; proc; opt
+
+write_json alu4.json
+write_rtlil alu4.rtlil

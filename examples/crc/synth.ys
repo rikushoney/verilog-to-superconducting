@@ -1,0 +1,9 @@
+read_verilog -sv crc8.sv
+opt; proc; opt
+write_json crc8.json
+write_rtlil crc8.rtlil
+
+read_verilog -sv crc16.sv
+opt; proc; opt
+write_json crc16.json
+write_rtlil crc16.rtlil
