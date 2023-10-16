@@ -1,7 +1,0 @@
-[package]
-name = "vts_lefdef"
-version = "0.0.0"
-edition = "2021"
-
-[dependencies]
-vts_shared = { path = "../vts_shared" }
