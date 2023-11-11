@@ -1,7 +1,8 @@
 [package]
-name = "yosys-sys"
+name = "vts-yosys-sys"
 version = "0.0.0"
 edition = "2021"
 
 [build-dependencies]
-cmake = "0.1"
+bindgen = "0.69"
+cc = "1.0"

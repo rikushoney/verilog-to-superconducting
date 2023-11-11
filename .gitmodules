@@ -2,6 +2,3 @@
 	path = pdks/rsfq_mitll_pdk
 	url = https://github.com/rikushoney/rsfq_mitll_pdk.git
 	shallow = true
-[submodule "crates/vts_yosys/yosys-sys/yosys_cmake"]
-	path = crates/vts_yosys/yosys-sys/yosys_cmake
-	url = https://github.com/rikushoney/yosys_cmake.git
