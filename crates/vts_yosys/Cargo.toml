@@ -4,4 +4,4 @@ version = "0.0.0"
 edition = "2021"
 
 [dependencies]
-vts-yosys-sys = { path = "vts-yosys-sys" }
+yosys-mini-sys = { path = "yosys-mini-sys" }
