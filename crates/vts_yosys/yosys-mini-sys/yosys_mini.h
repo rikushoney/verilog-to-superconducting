@@ -2,10 +2,108 @@
 
 #include <algorithm>
 #include <memory>
+#include <set>
 #include <sstream>
+#include <stdarg.h>
 #include <vector>
 
+#if __cplusplus >= 201703L
+#define YS_FALLTHROUGH [[fallthrough]];
+#elif defined(__clang__)
+#define YS_FALLTHROUGH [[clang::fallthrough]];
+#elif defined(__GNUC__)
+#define YS_FALLTHROUGH [[gnu::fallthrough]];
+#else
+#define YS_FALLTHROUGH
+#endif
+
 namespace yosys_mini {
+
+int readsome(std::istream &f, char *s, int n);
+
+inline void memhasher() {}
+
+extern int autoidx;
+extern std::set<std::string> yosys_input_files, yosys_output_files;
+
+inline std::string vstringf(const char *fmt, va_list ap) {
+  // For the common case of strings shorter than 128, save a heap
+  // allocation by using a stack allocated buffer.
+  const int kBufSize = 128;
+  char buf[kBufSize];
+  buf[0] = '\0';
+  va_list apc;
+  va_copy(apc, ap);
+  int n = vsnprintf(buf, kBufSize, fmt, apc);
+  va_end(apc);
+  if (n < kBufSize)
+    return std::string(buf);
+
+  std::string string;
+  char *str = NULL;
+#if defined(_WIN32) || defined(__CYGWIN__)
+  int sz = 2 * kBufSize, rc;
+  while (1) {
+    va_copy(apc, ap);
+    str = (char *)realloc(str, sz);
+    rc = vsnprintf(str, sz, fmt, apc);
+    va_end(apc);
+    if (rc >= 0 && rc < sz)
+      break;
+    sz *= 2;
+  }
+  if (str != NULL) {
+    string = str;
+    free(str);
+  }
+  return string;
+#else
+  if (vasprintf(&str, fmt, ap) < 0)
+    str = NULL;
+  if (str != NULL) {
+    string = str;
+    free(str);
+  }
+  return string;
+#endif
+}
+
+inline std::string stringf(const char *fmt, ...) {
+  std::string string;
+  va_list ap;
+
+  va_start(ap, fmt);
+  string = vstringf(fmt, ap);
+  va_end(ap);
+
+  return string;
+}
+
+std::vector<std::string> split_tokens(const std::string &text,
+                                      const char *sep = " \t\r\n");
+
+std::string next_token(std::string &text, const char *sep = " \t\r\n",
+                       bool long_strings = false);
+
+namespace RTLIL {
+struct IdString;
+struct Const;
+struct SigBit;
+struct SigSpec;
+struct Wire;
+struct Cell;
+struct Memory;
+struct Process;
+struct Module;
+struct Design;
+struct Monitor;
+enum State : unsigned char;
+} // namespace RTLIL
+
+namespace AST {
+struct AstNode;
+}
+
 namespace hashlib {
 
 const int hashtable_size_trigger = 2;
@@ -1156,5 +1254,26 @@ public:
   const_iterator end() const { return database.end(); }
 };
 
+template <> struct hash_ops<RTLIL::Wire *> : hash_obj_ops {};
+template <> struct hash_ops<RTLIL::Cell *> : hash_obj_ops {};
+template <> struct hash_ops<RTLIL::Memory *> : hash_obj_ops {};
+template <> struct hash_ops<RTLIL::Process *> : hash_obj_ops {};
+template <> struct hash_ops<RTLIL::Module *> : hash_obj_ops {};
+template <> struct hash_ops<RTLIL::Design *> : hash_obj_ops {};
+template <> struct hash_ops<RTLIL::Monitor *> : hash_obj_ops {};
+template <> struct hash_ops<AST::AstNode *> : hash_obj_ops {};
+
+template <> struct hash_ops<const RTLIL::Wire *> : hash_obj_ops {};
+template <> struct hash_ops<const RTLIL::Cell *> : hash_obj_ops {};
+template <> struct hash_ops<const RTLIL::Memory *> : hash_obj_ops {};
+template <> struct hash_ops<const RTLIL::Process *> : hash_obj_ops {};
+template <> struct hash_ops<const RTLIL::Module *> : hash_obj_ops {};
+template <> struct hash_ops<const RTLIL::Design *> : hash_obj_ops {};
+template <> struct hash_ops<const RTLIL::Monitor *> : hash_obj_ops {};
+template <> struct hash_ops<const AST::AstNode *> : hash_obj_ops {};
+
 } // namespace hashlib
+
+const char *log_id(const RTLIL::IdString &str);
+
 } // namespace yosys_mini

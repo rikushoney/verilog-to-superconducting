@@ -1,8 +1,10 @@
 #pragma once
 
+#include "rtlil.h"
 #include "yosys_mini.h"
 
 #include <functional>
+#include <list>
 
 namespace yosys_mini {
 
@@ -449,10 +451,7 @@ struct AstNode {
   void fixup_hierarchy_flags(bool force_descend = false);
 
   // helper to print errors from simplify/genrtlil code
-  [[noreturn]] void input_error(const char *format, ...) const {
-    // YS_ATTRIBUTE(format(printf, 2, 3));
-    exit(1);
-  }
+  [[noreturn]] void input_error(const char *format, ...) const;
 };
 
 // process an AST tree (ast must point to an AST_DESIGN node) and generate RTLIL
@@ -533,6 +532,19 @@ std::string derived_module_name(
 // used to provide simplify() access to the current design for looking up
 // modules, ports, wires, etc.
 void set_simplify_design_context(const RTLIL::Design *design);
+
+class Binding : public RTLIL::Binding {
+public:
+  Binding(RTLIL::IdString target_type, RTLIL::IdString target_name,
+          const AstNode &cell);
+
+  std::string describe() const override;
+
+private:
+  // The syntax-level representation of the cell to be bound.
+  std::unique_ptr<AstNode> ast_node;
+};
+
 } // namespace AST
 
 namespace AST_INTERNAL {
@@ -621,6 +633,43 @@ extern bool specify_mode;
 // lexer input stream
 extern std::istream *lexin;
 } // namespace VERILOG_FRONTEND
+
+struct define_body_t;
+struct arg_map_t;
+
+struct define_map_t {
+  define_map_t();
+  ~define_map_t();
+
+  // Add a definition, overwriting any existing definition for name.
+  void add(const std::string &name, const std::string &txt,
+           const arg_map_t *args = nullptr);
+  void add(const std::string &name, const define_body_t &body);
+
+  // Merge in another map of definitions (which take precedence
+  // over anything currently defined).
+  void merge(const define_map_t &map);
+
+  // Find a definition by name. If no match, returns null.
+  const define_body_t *find(const std::string &name) const;
+
+  // Erase a definition by name (no effect if not defined).
+  void erase(const std::string &name);
+
+  // Clear any existing definitions
+  void clear();
+
+  // Print a list of definitions, using the log function
+  void log() const;
+
+  std::map<std::string, std::unique_ptr<define_body_t>> defines;
+};
+
+std::string
+frontend_verilog_preproc(std::istream &f, std::string filename,
+                         const define_map_t &pre_defines,
+                         define_map_t &global_defines_cache,
+                         const std::list<std::string> &include_dirs);
 
 } // namespace yosys_mini
 

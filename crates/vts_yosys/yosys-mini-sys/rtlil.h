@@ -9,7 +9,22 @@
 #include <string>
 #include <utility>
 
+#define NEW_ID yosys_mini::new_id(__FILE__, __LINE__, __FUNCTION__)
+
+#define NEW_ID_SUFFIX(suffix)                                                  \
+  yosys_mini::new_id_suffix(__FILE__, __LINE__, __FUNCTION__, suffix)
+
+#define ID(_id)                                                                \
+  ([]() {                                                                      \
+    const char *p = "\\" #_id, *q = p[1] == '$' ? p + 1 : p;                   \
+    static const yosys_mini::RTLIL::IdString id(q);                            \
+    return id;                                                                 \
+  })()
+
 namespace yosys_mini {
+
+struct define_map_t;
+
 namespace RTLIL {
 
 using namespace hashlib;
@@ -703,59 +718,6 @@ struct sort_by_id_str {
   }
 };
 
-inline std::string vstringf(const char *fmt, va_list ap) {
-  // For the common case of strings shorter than 128, save a heap
-  // allocation by using a stack allocated buffer.
-  const int kBufSize = 128;
-  char buf[kBufSize];
-  buf[0] = '\0';
-  va_list apc;
-  va_copy(apc, ap);
-  int n = vsnprintf(buf, kBufSize, fmt, apc);
-  va_end(apc);
-  if (n < kBufSize)
-    return std::string(buf);
-
-  std::string string;
-  char *str = NULL;
-#if defined(_WIN32) || defined(__CYGWIN__)
-  int sz = 2 * kBufSize, rc;
-  while (1) {
-    va_copy(apc, ap);
-    str = (char *)realloc(str, sz);
-    rc = vsnprintf(str, sz, fmt, apc);
-    va_end(apc);
-    if (rc >= 0 && rc < sz)
-      break;
-    sz *= 2;
-  }
-  if (str != NULL) {
-    string = str;
-    free(str);
-  }
-  return string;
-#else
-  if (vasprintf(&str, fmt, ap) < 0)
-    str = NULL;
-  if (str != NULL) {
-    string = str;
-    free(str);
-  }
-  return string;
-#endif
-}
-
-inline std::string stringf(const char *fmt, ...) {
-  std::string string;
-  va_list ap;
-
-  va_start(ap, fmt);
-  string = vstringf(fmt, ap);
-  va_end(ap);
-
-  return string;
-}
-
 static inline std::string encode_filename(const std::string &filename) {
   std::stringstream val;
   if (!std::any_of(filename.begin(), filename.end(), [](char c) {
@@ -1005,6 +967,35 @@ template <typename T> struct ObjRange {
 
   pool<T> to_pool() const { return *this; }
   std::vector<T> to_vector() const { return *this; }
+};
+
+struct Binding {
+  // Represents a bind construct.
+  //
+  // The target of the binding is represented by target_type and
+  // target_name (see comments above the fields).
+
+  Binding(RTLIL::IdString target_type, RTLIL::IdString target_name);
+
+  virtual ~Binding() {}
+
+  // Return a string describing the binding
+  virtual std::string describe() const = 0;
+
+protected:
+  // May be empty. If not, it's the name of the module or interface to
+  // bind to.
+  RTLIL::IdString target_type;
+
+  // If target_type is nonempty (the usual case), this is a hierarchical
+  // reference to the bind target. If target_type is empty, we have to
+  // wait until the hierarchy pass to figure out whether this was the name
+  // of a module/interface type or an instance.
+  RTLIL::IdString target_name;
+
+  // An attribute name which contains an ID that's unique across binding
+  // instances (used to ensure we don't apply a binding twice to a module)
+  RTLIL::IdString attr_name;
 };
 
 }; // namespace RTLIL
@@ -1486,7 +1477,7 @@ struct RTLIL::Design {
   std::vector<RTLIL::Binding *> bindings_;
 
   std::vector<AST::AstNode *> verilog_packages, verilog_globals;
-  // std::unique_ptr<define_map_t> verilog_defines;
+  std::unique_ptr<define_map_t> verilog_defines;
 
   std::vector<RTLIL::Selection> selection_stack;
   dict<RTLIL::IdString, RTLIL::Selection> selection_vars;
@@ -2698,5 +2689,786 @@ template <typename T> void RTLIL::Process::rewrite_sigspecs2(T &functor) {
   for (auto it : syncs)
     it->rewrite_sigspecs2(functor);
 }
+
+struct Macc {
+  struct port_t {
+    RTLIL::SigSpec in_a, in_b;
+    bool is_signed, do_subtract;
+  };
+
+  std::vector<port_t> ports;
+  RTLIL::SigSpec bit_ports;
+
+  void optimize(int width) {
+    using RTLIL::State;
+    std::vector<port_t> new_ports;
+    RTLIL::SigSpec new_bit_ports;
+    RTLIL::Const off(0, width);
+
+    for (auto &port : ports) {
+      if (GetSize(port.in_a) == 0 && GetSize(port.in_b) == 0)
+        continue;
+
+      if (GetSize(port.in_a) < GetSize(port.in_b))
+        std::swap(port.in_a, port.in_b);
+
+      if (GetSize(port.in_a) == 1 && GetSize(port.in_b) == 0 &&
+          !port.is_signed && !port.do_subtract) {
+        bit_ports.append(port.in_a);
+        continue;
+      }
+
+      if (port.in_a.is_fully_const() && port.in_b.is_fully_const()) {
+        RTLIL::Const v = port.in_a.as_const();
+        if (GetSize(port.in_b))
+          v = const_mul(v, port.in_b.as_const(), port.is_signed, port.is_signed,
+                        width);
+        if (port.do_subtract)
+          off = const_sub(off, v, port.is_signed, port.is_signed, width);
+        else
+          off = const_add(off, v, port.is_signed, port.is_signed, width);
+        continue;
+      }
+
+      if (port.is_signed) {
+        while (GetSize(port.in_a) > 1 && port.in_a[GetSize(port.in_a) - 1] ==
+                                             port.in_a[GetSize(port.in_a) - 2])
+          port.in_a.remove(GetSize(port.in_a) - 1);
+        while (GetSize(port.in_b) > 1 && port.in_b[GetSize(port.in_b) - 1] ==
+                                             port.in_b[GetSize(port.in_b) - 2])
+          port.in_b.remove(GetSize(port.in_b) - 1);
+      } else {
+        while (GetSize(port.in_a) > 1 &&
+               port.in_a[GetSize(port.in_a) - 1] == State::S0)
+          port.in_a.remove(GetSize(port.in_a) - 1);
+        while (GetSize(port.in_b) > 1 &&
+               port.in_b[GetSize(port.in_b) - 1] == State::S0)
+          port.in_b.remove(GetSize(port.in_b) - 1);
+      }
+
+      new_ports.push_back(port);
+    }
+
+    for (auto &bit : bit_ports)
+      if (bit == State::S1)
+        off = const_add(off, RTLIL::Const(1, width), false, false, width);
+      else if (bit != State::S0)
+        new_bit_ports.append(bit);
+
+    if (off.as_bool()) {
+      port_t port;
+      port.in_a = off;
+      port.is_signed = false;
+      port.do_subtract = false;
+      new_ports.push_back(port);
+    }
+
+    new_ports.swap(ports);
+    bit_ports = new_bit_ports;
+  }
+
+  void from_cell(RTLIL::Cell *cell) {
+    using namespace RTLIL;
+    namespace ID = RTLIL::ID;
+    RTLIL::SigSpec port_a = cell->getPort(ID::A);
+
+    ports.clear();
+    bit_ports = cell->getPort(ID::B);
+
+    std::vector<RTLIL::State> config_bits = cell->getParam(ID::CONFIG).bits;
+    int config_cursor = 0;
+
+    int config_width = cell->getParam(ID::CONFIG_WIDTH).as_int();
+    // log_assert(GetSize(config_bits) >= config_width);
+
+    int num_bits = 0;
+    if (config_bits[config_cursor++] == State::S1)
+      num_bits |= 1;
+    if (config_bits[config_cursor++] == State::S1)
+      num_bits |= 2;
+    if (config_bits[config_cursor++] == State::S1)
+      num_bits |= 4;
+    if (config_bits[config_cursor++] == State::S1)
+      num_bits |= 8;
+
+    int port_a_cursor = 0;
+    while (port_a_cursor < GetSize(port_a)) {
+      // log_assert(config_cursor + 2 + 2 * num_bits <= config_width);
+
+      port_t this_port;
+      this_port.is_signed = config_bits[config_cursor++] == State::S1;
+      this_port.do_subtract = config_bits[config_cursor++] == State::S1;
+
+      int size_a = 0;
+      for (int i = 0; i < num_bits; i++)
+        if (config_bits[config_cursor++] == State::S1)
+          size_a |= 1 << i;
+
+      this_port.in_a = port_a.extract(port_a_cursor, size_a);
+      port_a_cursor += size_a;
+
+      int size_b = 0;
+      for (int i = 0; i < num_bits; i++)
+        if (config_bits[config_cursor++] == State::S1)
+          size_b |= 1 << i;
+
+      this_port.in_b = port_a.extract(port_a_cursor, size_b);
+      port_a_cursor += size_b;
+
+      if (size_a || size_b)
+        ports.push_back(this_port);
+    }
+
+    // log_assert(config_cursor == config_width);
+    // log_assert(port_a_cursor == GetSize(port_a));
+  }
+
+  void to_cell(RTLIL::Cell *cell) const {
+    using namespace RTLIL;
+    RTLIL::SigSpec port_a;
+    std::vector<RTLIL::State> config_bits;
+    int max_size = 0, num_bits = 0;
+
+    for (auto &port : ports) {
+      max_size = std::max(max_size, GetSize(port.in_a));
+      max_size = std::max(max_size, GetSize(port.in_b));
+    }
+
+    while (max_size)
+      num_bits++, max_size /= 2;
+
+    // log_assert(num_bits < 16);
+    config_bits.push_back(num_bits & 1 ? State::S1 : State::S0);
+    config_bits.push_back(num_bits & 2 ? State::S1 : State::S0);
+    config_bits.push_back(num_bits & 4 ? State::S1 : State::S0);
+    config_bits.push_back(num_bits & 8 ? State::S1 : State::S0);
+
+    for (auto &port : ports) {
+      if (GetSize(port.in_a) == 0)
+        continue;
+
+      config_bits.push_back(port.is_signed ? State::S1 : State::S0);
+      config_bits.push_back(port.do_subtract ? State::S1 : State::S0);
+
+      int size_a = GetSize(port.in_a);
+      for (int i = 0; i < num_bits; i++)
+        config_bits.push_back(size_a & (1 << i) ? State::S1 : State::S0);
+
+      int size_b = GetSize(port.in_b);
+      for (int i = 0; i < num_bits; i++)
+        config_bits.push_back(size_b & (1 << i) ? State::S1 : State::S0);
+
+      port_a.append(port.in_a);
+      port_a.append(port.in_b);
+    }
+
+    cell->setPort(ID::A, port_a);
+    cell->setPort(ID::B, bit_ports);
+    cell->setParam(ID::CONFIG, config_bits);
+    cell->setParam(ID::CONFIG_WIDTH, GetSize(config_bits));
+    cell->setParam(ID::A_WIDTH, GetSize(port_a));
+    cell->setParam(ID::B_WIDTH, GetSize(bit_ports));
+  }
+
+  bool eval(RTLIL::Const &result) const {
+    using namespace RTLIL;
+    for (auto &bit : result.bits)
+      bit = State::S0;
+
+    for (auto &port : ports) {
+      if (!port.in_a.is_fully_const() || !port.in_b.is_fully_const())
+        return false;
+
+      RTLIL::Const summand;
+      if (GetSize(port.in_b) == 0)
+        summand = const_pos(port.in_a.as_const(), port.in_b.as_const(),
+                            port.is_signed, port.is_signed, GetSize(result));
+      else
+        summand = const_mul(port.in_a.as_const(), port.in_b.as_const(),
+                            port.is_signed, port.is_signed, GetSize(result));
+
+      if (port.do_subtract)
+        result = const_sub(result, summand, port.is_signed, port.is_signed,
+                           GetSize(result));
+      else
+        result = const_add(result, summand, port.is_signed, port.is_signed,
+                           GetSize(result));
+    }
+
+    for (auto bit : bit_ports) {
+      if (bit.wire)
+        return false;
+      result = const_add(result, bit.data, false, false, GetSize(result));
+    }
+
+    return true;
+  }
+
+  Macc(RTLIL::Cell *cell = nullptr) {
+    if (cell != nullptr)
+      from_cell(cell);
+  }
+};
+
+struct CellType {
+  RTLIL::IdString type;
+  hashlib::pool<RTLIL::IdString> inputs, outputs;
+  bool is_evaluable;
+};
+
+struct CellTypes {
+  hashlib::dict<RTLIL::IdString, CellType> cell_types;
+
+  CellTypes() {}
+
+  CellTypes(RTLIL::Design *design) { setup(design); }
+
+  void setup(RTLIL::Design *design = NULL) {
+    if (design)
+      setup_design(design);
+
+    setup_internals();
+    setup_internals_mem();
+    setup_internals_anyinit();
+    setup_stdcells();
+    setup_stdcells_mem();
+  }
+
+  void setup_type(RTLIL::IdString type,
+                  const hashlib::pool<RTLIL::IdString> &inputs,
+                  const hashlib::pool<RTLIL::IdString> &outputs,
+                  bool is_evaluable = false) {
+    CellType ct = {type, inputs, outputs, is_evaluable};
+    cell_types[ct.type] = ct;
+  }
+
+  void setup_module(RTLIL::Module *module) {
+    hashlib::pool<RTLIL::IdString> inputs, outputs;
+    for (RTLIL::IdString wire_name : module->ports) {
+      RTLIL::Wire *wire = module->wire(wire_name);
+      if (wire->port_input)
+        inputs.insert(wire->name);
+      if (wire->port_output)
+        outputs.insert(wire->name);
+    }
+    setup_type(module->name, inputs, outputs);
+  }
+
+  void setup_design(RTLIL::Design *design) {
+    for (auto module : design->modules())
+      setup_module(module);
+  }
+
+  void setup_internals() {
+    namespace ID = RTLIL::ID;
+    using namespace hashlib;
+
+    setup_internals_eval();
+
+    setup_type(ID($tribuf), {ID::A, ID::EN}, {ID::Y}, true);
+
+    setup_type(ID($assert), {ID::A, ID::EN}, pool<RTLIL::IdString>(), true);
+    setup_type(ID($assume), {ID::A, ID::EN}, pool<RTLIL::IdString>(), true);
+    setup_type(ID($live), {ID::A, ID::EN}, pool<RTLIL::IdString>(), true);
+    setup_type(ID($fair), {ID::A, ID::EN}, pool<RTLIL::IdString>(), true);
+    setup_type(ID($cover), {ID::A, ID::EN}, pool<RTLIL::IdString>(), true);
+    setup_type(ID($initstate), pool<RTLIL::IdString>(), {ID::Y}, true);
+    setup_type(ID($anyconst), pool<RTLIL::IdString>(), {ID::Y}, true);
+    setup_type(ID($anyseq), pool<RTLIL::IdString>(), {ID::Y}, true);
+    setup_type(ID($allconst), pool<RTLIL::IdString>(), {ID::Y}, true);
+    setup_type(ID($allseq), pool<RTLIL::IdString>(), {ID::Y}, true);
+    setup_type(ID($equiv), {ID::A, ID::B}, {ID::Y}, true);
+    setup_type(ID($specify2), {ID::EN, ID::SRC, ID::DST},
+               pool<RTLIL::IdString>(), true);
+    setup_type(ID($specify3), {ID::EN, ID::SRC, ID::DST, ID::DAT},
+               pool<RTLIL::IdString>(), true);
+    setup_type(ID($specrule), {ID::EN_SRC, ID::EN_DST, ID::SRC, ID::DST},
+               pool<RTLIL::IdString>(), true);
+    setup_type(ID($print), {ID::EN, ID::ARGS, ID::TRG},
+               pool<RTLIL::IdString>());
+    setup_type(ID($set_tag), {ID::A, ID::SET, ID::CLR}, {ID::Y});
+    setup_type(ID($get_tag), {ID::A}, {ID::Y});
+    setup_type(ID($overwrite_tag), {ID::A, ID::SET, ID::CLR},
+               pool<RTLIL::IdString>());
+    setup_type(ID($original_tag), {ID::A}, {ID::Y});
+    setup_type(ID($future_ff), {ID::A}, {ID::Y});
+  }
+
+  void setup_internals_eval() {
+    namespace ID = RTLIL::ID;
+
+    std::vector<RTLIL::IdString> unary_ops = {
+        ID($not),       ID($pos),        ID($neg),         ID($reduce_and),
+        ID($reduce_or), ID($reduce_xor), ID($reduce_xnor), ID($reduce_bool),
+        ID($logic_not), ID($slice),      ID($lut),         ID($sop)};
+
+    std::vector<RTLIL::IdString> binary_ops = {
+        ID($and),  ID($or),        ID($xor),      ID($xnor),     ID($shl),
+        ID($shr),  ID($sshl),      ID($sshr),     ID($shift),    ID($shiftx),
+        ID($lt),   ID($le),        ID($eq),       ID($ne),       ID($eqx),
+        ID($nex),  ID($ge),        ID($gt),       ID($add),      ID($sub),
+        ID($mul),  ID($div),       ID($mod),      ID($divfloor), ID($modfloor),
+        ID($pow),  ID($logic_and), ID($logic_or), ID($concat),   ID($macc),
+        ID($bweqx)};
+
+    for (auto type : unary_ops)
+      setup_type(type, {ID::A}, {ID::Y}, true);
+
+    for (auto type : binary_ops)
+      setup_type(type, {ID::A, ID::B}, {ID::Y}, true);
+
+    for (auto type :
+         std::vector<RTLIL::IdString>({ID($mux), ID($pmux), ID($bwmux)}))
+      setup_type(type, {ID::A, ID::B, ID::S}, {ID::Y}, true);
+
+    for (auto type : std::vector<RTLIL::IdString>({ID($bmux), ID($demux)}))
+      setup_type(type, {ID::A, ID::S}, {ID::Y}, true);
+
+    setup_type(ID($lcu), {ID::P, ID::G, ID::CI}, {ID::CO}, true);
+    setup_type(ID($alu), {ID::A, ID::B, ID::CI, ID::BI}, {ID::X, ID::Y, ID::CO},
+               true);
+    setup_type(ID($fa), {ID::A, ID::B, ID::C}, {ID::X, ID::Y}, true);
+  }
+
+  void setup_internals_ff() {
+    namespace ID = RTLIL::ID;
+
+    setup_type(ID($sr), {ID::SET, ID::CLR}, {ID::Q});
+    setup_type(ID($ff), {ID::D}, {ID::Q});
+    setup_type(ID($dff), {ID::CLK, ID::D}, {ID::Q});
+    setup_type(ID($dffe), {ID::CLK, ID::EN, ID::D}, {ID::Q});
+    setup_type(ID($dffsr), {ID::CLK, ID::SET, ID::CLR, ID::D}, {ID::Q});
+    setup_type(ID($dffsre), {ID::CLK, ID::SET, ID::CLR, ID::D, ID::EN},
+               {ID::Q});
+    setup_type(ID($adff), {ID::CLK, ID::ARST, ID::D}, {ID::Q});
+    setup_type(ID($adffe), {ID::CLK, ID::ARST, ID::D, ID::EN}, {ID::Q});
+    setup_type(ID($aldff), {ID::CLK, ID::ALOAD, ID::AD, ID::D}, {ID::Q});
+    setup_type(ID($aldffe), {ID::CLK, ID::ALOAD, ID::AD, ID::D, ID::EN},
+               {ID::Q});
+    setup_type(ID($sdff), {ID::CLK, ID::SRST, ID::D}, {ID::Q});
+    setup_type(ID($sdffe), {ID::CLK, ID::SRST, ID::D, ID::EN}, {ID::Q});
+    setup_type(ID($sdffce), {ID::CLK, ID::SRST, ID::D, ID::EN}, {ID::Q});
+    setup_type(ID($dlatch), {ID::EN, ID::D}, {ID::Q});
+    setup_type(ID($adlatch), {ID::EN, ID::D, ID::ARST}, {ID::Q});
+    setup_type(ID($dlatchsr), {ID::EN, ID::SET, ID::CLR, ID::D}, {ID::Q});
+  }
+
+  void setup_internals_anyinit() {
+    namespace ID = RTLIL::ID;
+
+    setup_type(ID($anyinit), {ID::D}, {ID::Q});
+  }
+
+  void setup_internals_mem() {
+    namespace ID = RTLIL::ID;
+    using namespace hashlib;
+
+    setup_internals_ff();
+
+    setup_type(ID($memrd), {ID::CLK, ID::EN, ID::ADDR}, {ID::DATA});
+    setup_type(ID($memrd_v2), {ID::CLK, ID::EN, ID::ARST, ID::SRST, ID::ADDR},
+               {ID::DATA});
+    setup_type(ID($memwr), {ID::CLK, ID::EN, ID::ADDR, ID::DATA},
+               pool<RTLIL::IdString>());
+    setup_type(ID($memwr_v2), {ID::CLK, ID::EN, ID::ADDR, ID::DATA},
+               pool<RTLIL::IdString>());
+    setup_type(ID($meminit), {ID::ADDR, ID::DATA}, pool<RTLIL::IdString>());
+    setup_type(ID($meminit_v2), {ID::ADDR, ID::DATA, ID::EN},
+               pool<RTLIL::IdString>());
+    setup_type(ID($mem),
+               {ID::RD_CLK, ID::RD_EN, ID::RD_ADDR, ID::WR_CLK, ID::WR_EN,
+                ID::WR_ADDR, ID::WR_DATA},
+               {ID::RD_DATA});
+    setup_type(ID($mem_v2),
+               {ID::RD_CLK, ID::RD_EN, ID::RD_ARST, ID::RD_SRST, ID::RD_ADDR,
+                ID::WR_CLK, ID::WR_EN, ID::WR_ADDR, ID::WR_DATA},
+               {ID::RD_DATA});
+
+    setup_type(ID($fsm), {ID::CLK, ID::ARST, ID::CTRL_IN}, {ID::CTRL_OUT});
+  }
+
+  void setup_stdcells() {
+    namespace ID = RTLIL::ID;
+    setup_stdcells_eval();
+
+    setup_type(ID($_TBUF_), {ID::A, ID::E}, {ID::Y}, true);
+  }
+
+  void setup_stdcells_eval() {
+    namespace ID = RTLIL::ID;
+
+    setup_type(ID($_BUF_), {ID::A}, {ID::Y}, true);
+    setup_type(ID($_NOT_), {ID::A}, {ID::Y}, true);
+    setup_type(ID($_AND_), {ID::A, ID::B}, {ID::Y}, true);
+    setup_type(ID($_NAND_), {ID::A, ID::B}, {ID::Y}, true);
+    setup_type(ID($_OR_), {ID::A, ID::B}, {ID::Y}, true);
+    setup_type(ID($_NOR_), {ID::A, ID::B}, {ID::Y}, true);
+    setup_type(ID($_XOR_), {ID::A, ID::B}, {ID::Y}, true);
+    setup_type(ID($_XNOR_), {ID::A, ID::B}, {ID::Y}, true);
+    setup_type(ID($_ANDNOT_), {ID::A, ID::B}, {ID::Y}, true);
+    setup_type(ID($_ORNOT_), {ID::A, ID::B}, {ID::Y}, true);
+    setup_type(ID($_MUX_), {ID::A, ID::B, ID::S}, {ID::Y}, true);
+    setup_type(ID($_NMUX_), {ID::A, ID::B, ID::S}, {ID::Y}, true);
+    setup_type(ID($_MUX4_), {ID::A, ID::B, ID::C, ID::D, ID::S, ID::T}, {ID::Y},
+               true);
+    setup_type(ID($_MUX8_),
+               {ID::A, ID::B, ID::C, ID::D, ID::E, ID::F, ID::G, ID::H, ID::S,
+                ID::T, ID::U},
+               {ID::Y}, true);
+    setup_type(ID($_MUX16_), {ID::A, ID::B, ID::C, ID::D, ID::E, ID::F, ID::G,
+                              ID::H, ID::I, ID::J, ID::K, ID::L, ID::M, ID::N,
+                              ID::O, ID::P, ID::S, ID::T, ID::U, ID::V},
+               {ID::Y}, true);
+    setup_type(ID($_AOI3_), {ID::A, ID::B, ID::C}, {ID::Y}, true);
+    setup_type(ID($_OAI3_), {ID::A, ID::B, ID::C}, {ID::Y}, true);
+    setup_type(ID($_AOI4_), {ID::A, ID::B, ID::C, ID::D}, {ID::Y}, true);
+    setup_type(ID($_OAI4_), {ID::A, ID::B, ID::C, ID::D}, {ID::Y}, true);
+  }
+
+  void setup_stdcells_mem() {
+    namespace ID = RTLIL::ID;
+
+    std::vector<char> list_np = {'N', 'P'}, list_01 = {'0', '1'};
+
+    for (auto c1 : list_np)
+      for (auto c2 : list_np)
+        setup_type(stringf("$_SR_%c%c_", c1, c2), {ID::S, ID::R}, {ID::Q});
+
+    setup_type(ID($_FF_), {ID::D}, {ID::Q});
+
+    for (auto c1 : list_np)
+      setup_type(stringf("$_DFF_%c_", c1), {ID::C, ID::D}, {ID::Q});
+
+    for (auto c1 : list_np)
+      for (auto c2 : list_np)
+        setup_type(stringf("$_DFFE_%c%c_", c1, c2), {ID::C, ID::D, ID::E},
+                   {ID::Q});
+
+    for (auto c1 : list_np)
+      for (auto c2 : list_np)
+        for (auto c3 : list_01)
+          setup_type(stringf("$_DFF_%c%c%c_", c1, c2, c3),
+                     {ID::C, ID::R, ID::D}, {ID::Q});
+
+    for (auto c1 : list_np)
+      for (auto c2 : list_np)
+        for (auto c3 : list_01)
+          for (auto c4 : list_np)
+            setup_type(stringf("$_DFFE_%c%c%c%c_", c1, c2, c3, c4),
+                       {ID::C, ID::R, ID::D, ID::E}, {ID::Q});
+
+    for (auto c1 : list_np)
+      for (auto c2 : list_np)
+        setup_type(stringf("$_ALDFF_%c%c_", c1, c2),
+                   {ID::C, ID::L, ID::AD, ID::D}, {ID::Q});
+
+    for (auto c1 : list_np)
+      for (auto c2 : list_np)
+        for (auto c3 : list_np)
+          setup_type(stringf("$_ALDFFE_%c%c%c_", c1, c2, c3),
+                     {ID::C, ID::L, ID::AD, ID::D, ID::E}, {ID::Q});
+
+    for (auto c1 : list_np)
+      for (auto c2 : list_np)
+        for (auto c3 : list_np)
+          setup_type(stringf("$_DFFSR_%c%c%c_", c1, c2, c3),
+                     {ID::C, ID::S, ID::R, ID::D}, {ID::Q});
+
+    for (auto c1 : list_np)
+      for (auto c2 : list_np)
+        for (auto c3 : list_np)
+          for (auto c4 : list_np)
+            setup_type(stringf("$_DFFSRE_%c%c%c%c_", c1, c2, c3, c4),
+                       {ID::C, ID::S, ID::R, ID::D, ID::E}, {ID::Q});
+
+    for (auto c1 : list_np)
+      for (auto c2 : list_np)
+        for (auto c3 : list_01)
+          setup_type(stringf("$_SDFF_%c%c%c_", c1, c2, c3),
+                     {ID::C, ID::R, ID::D}, {ID::Q});
+
+    for (auto c1 : list_np)
+      for (auto c2 : list_np)
+        for (auto c3 : list_01)
+          for (auto c4 : list_np)
+            setup_type(stringf("$_SDFFE_%c%c%c%c_", c1, c2, c3, c4),
+                       {ID::C, ID::R, ID::D, ID::E}, {ID::Q});
+
+    for (auto c1 : list_np)
+      for (auto c2 : list_np)
+        for (auto c3 : list_01)
+          for (auto c4 : list_np)
+            setup_type(stringf("$_SDFFCE_%c%c%c%c_", c1, c2, c3, c4),
+                       {ID::C, ID::R, ID::D, ID::E}, {ID::Q});
+
+    for (auto c1 : list_np)
+      setup_type(stringf("$_DLATCH_%c_", c1), {ID::E, ID::D}, {ID::Q});
+
+    for (auto c1 : list_np)
+      for (auto c2 : list_np)
+        for (auto c3 : list_01)
+          setup_type(stringf("$_DLATCH_%c%c%c_", c1, c2, c3),
+                     {ID::E, ID::R, ID::D}, {ID::Q});
+
+    for (auto c1 : list_np)
+      for (auto c2 : list_np)
+        for (auto c3 : list_np)
+          setup_type(stringf("$_DLATCHSR_%c%c%c_", c1, c2, c3),
+                     {ID::E, ID::S, ID::R, ID::D}, {ID::Q});
+  }
+
+  void clear() { cell_types.clear(); }
+
+  bool cell_known(RTLIL::IdString type) const {
+    return cell_types.count(type) != 0;
+  }
+
+  bool cell_output(RTLIL::IdString type, RTLIL::IdString port) const {
+    auto it = cell_types.find(type);
+    return it != cell_types.end() && it->second.outputs.count(port) != 0;
+  }
+
+  bool cell_input(RTLIL::IdString type, RTLIL::IdString port) const {
+    auto it = cell_types.find(type);
+    return it != cell_types.end() && it->second.inputs.count(port) != 0;
+  }
+
+  bool cell_evaluable(RTLIL::IdString type) const {
+    auto it = cell_types.find(type);
+    return it != cell_types.end() && it->second.is_evaluable;
+  }
+
+  static RTLIL::Const eval_not(RTLIL::Const v) {
+    using RTLIL::State;
+
+    for (auto &bit : v.bits)
+      if (bit == State::S0)
+        bit = State::S1;
+      else if (bit == State::S1)
+        bit = State::S0;
+    return v;
+  }
+
+  static RTLIL::Const eval(RTLIL::IdString type, const RTLIL::Const &arg1,
+                           const RTLIL::Const &arg2, bool signed1, bool signed2,
+                           int result_len, bool *errp = nullptr) {
+    if (type == ID($sshr) && !signed1)
+      type = ID($shr);
+    if (type == ID($sshl) && !signed1)
+      type = ID($shl);
+
+    if (type != ID($sshr) && type != ID($sshl) && type != ID($shr) &&
+        type != ID($shl) && type != ID($shift) && type != ID($shiftx) &&
+        type != ID($pos) && type != ID($neg) && type != ID($not)) {
+      if (!signed1 || !signed2)
+        signed1 = false, signed2 = false;
+    }
+
+#define HANDLE_CELL_TYPE(_t)                                                   \
+  if (type == ID($##_t))                                                       \
+    return const_##_t(arg1, arg2, signed1, signed2, result_len);
+    HANDLE_CELL_TYPE(not )
+    HANDLE_CELL_TYPE(and)
+    HANDLE_CELL_TYPE(or)
+    HANDLE_CELL_TYPE(xor)
+    HANDLE_CELL_TYPE(xnor)
+    HANDLE_CELL_TYPE(reduce_and)
+    HANDLE_CELL_TYPE(reduce_or)
+    HANDLE_CELL_TYPE(reduce_xor)
+    HANDLE_CELL_TYPE(reduce_xnor)
+    HANDLE_CELL_TYPE(reduce_bool)
+    HANDLE_CELL_TYPE(logic_not)
+    HANDLE_CELL_TYPE(logic_and)
+    HANDLE_CELL_TYPE(logic_or)
+    HANDLE_CELL_TYPE(shl)
+    HANDLE_CELL_TYPE(shr)
+    HANDLE_CELL_TYPE(sshl)
+    HANDLE_CELL_TYPE(sshr)
+    HANDLE_CELL_TYPE(shift)
+    HANDLE_CELL_TYPE(shiftx)
+    HANDLE_CELL_TYPE(lt)
+    HANDLE_CELL_TYPE(le)
+    HANDLE_CELL_TYPE(eq)
+    HANDLE_CELL_TYPE(ne)
+    HANDLE_CELL_TYPE(eqx)
+    HANDLE_CELL_TYPE(nex)
+    HANDLE_CELL_TYPE(ge)
+    HANDLE_CELL_TYPE(gt)
+    HANDLE_CELL_TYPE(add)
+    HANDLE_CELL_TYPE(sub)
+    HANDLE_CELL_TYPE(mul)
+    HANDLE_CELL_TYPE(div)
+    HANDLE_CELL_TYPE(mod)
+    HANDLE_CELL_TYPE(divfloor)
+    HANDLE_CELL_TYPE(modfloor)
+    HANDLE_CELL_TYPE(pow)
+    HANDLE_CELL_TYPE(pos)
+    HANDLE_CELL_TYPE(neg)
+#undef HANDLE_CELL_TYPE
+
+    if (type == ID($_BUF_))
+      return arg1;
+    if (type == ID($_NOT_))
+      return eval_not(arg1);
+    if (type == ID($_AND_))
+      return const_and(arg1, arg2, false, false, 1);
+    if (type == ID($_NAND_))
+      return eval_not(const_and(arg1, arg2, false, false, 1));
+    if (type == ID($_OR_))
+      return const_or(arg1, arg2, false, false, 1);
+    if (type == ID($_NOR_))
+      return eval_not(const_or(arg1, arg2, false, false, 1));
+    if (type == ID($_XOR_))
+      return const_xor(arg1, arg2, false, false, 1);
+    if (type == ID($_XNOR_))
+      return const_xnor(arg1, arg2, false, false, 1);
+    if (type == ID($_ANDNOT_))
+      return const_and(arg1, eval_not(arg2), false, false, 1);
+    if (type == ID($_ORNOT_))
+      return const_or(arg1, eval_not(arg2), false, false, 1);
+
+    if (errp != nullptr) {
+      *errp = true;
+      return RTLIL::State::Sm;
+    }
+
+    // log_abort();
+    exit(1);
+  }
+
+  static RTLIL::Const eval(RTLIL::Cell *cell, const RTLIL::Const &arg1,
+                           const RTLIL::Const &arg2, bool *errp = nullptr) {
+    namespace ID = RTLIL::ID;
+    using RTLIL::State;
+
+    if (cell->type == ID($slice)) {
+      RTLIL::Const ret;
+      int width = cell->parameters.at(ID::Y_WIDTH).as_int();
+      int offset = cell->parameters.at(ID::OFFSET).as_int();
+      ret.bits.insert(ret.bits.end(), arg1.bits.begin() + offset,
+                      arg1.bits.begin() + offset + width);
+      return ret;
+    }
+
+    if (cell->type == ID($concat)) {
+      RTLIL::Const ret = arg1;
+      ret.bits.insert(ret.bits.end(), arg2.bits.begin(), arg2.bits.end());
+      return ret;
+    }
+
+    if (cell->type == ID($bmux)) {
+      return const_bmux(arg1, arg2);
+    }
+
+    if (cell->type == ID($demux)) {
+      return const_demux(arg1, arg2);
+    }
+
+    if (cell->type == ID($bweqx)) {
+      return const_bweqx(arg1, arg2);
+    }
+
+    if (cell->type == ID($lut)) {
+      int width = cell->parameters.at(ID::WIDTH).as_int();
+
+      std::vector<RTLIL::State> t = cell->parameters.at(ID::LUT).bits;
+      while (GetSize(t) < (1 << width))
+        t.push_back(State::S0);
+      t.resize(1 << width);
+
+      return const_bmux(t, arg1);
+    }
+
+    if (cell->type == ID($sop)) {
+      int width = cell->parameters.at(ID::WIDTH).as_int();
+      int depth = cell->parameters.at(ID::DEPTH).as_int();
+      std::vector<RTLIL::State> t = cell->parameters.at(ID::TABLE).bits;
+
+      while (GetSize(t) < width * depth * 2)
+        t.push_back(State::S0);
+
+      RTLIL::State default_ret = State::S0;
+
+      for (int i = 0; i < depth; i++) {
+        bool match = true;
+        bool match_x = true;
+
+        for (int j = 0; j < width; j++) {
+          RTLIL::State a = arg1.bits.at(j);
+          if (t.at(2 * width * i + 2 * j + 0) == State::S1) {
+            if (a == State::S1)
+              match_x = false;
+            if (a != State::S0)
+              match = false;
+          }
+          if (t.at(2 * width * i + 2 * j + 1) == State::S1) {
+            if (a == State::S0)
+              match_x = false;
+            if (a != State::S1)
+              match = false;
+          }
+        }
+
+        if (match)
+          return State::S1;
+
+        if (match_x)
+          default_ret = State::Sx;
+      }
+
+      return default_ret;
+    }
+
+    bool signed_a = cell->parameters.count(ID::A_SIGNED) > 0 &&
+                    cell->parameters[ID::A_SIGNED].as_bool();
+    bool signed_b = cell->parameters.count(ID::B_SIGNED) > 0 &&
+                    cell->parameters[ID::B_SIGNED].as_bool();
+    int result_len = cell->parameters.count(ID::Y_WIDTH) > 0
+                         ? cell->parameters[ID::Y_WIDTH].as_int()
+                         : -1;
+    return eval(cell->type, arg1, arg2, signed_a, signed_b, result_len, errp);
+  }
+
+  static RTLIL::Const eval(RTLIL::Cell *cell, const RTLIL::Const &arg1,
+                           const RTLIL::Const &arg2, const RTLIL::Const &arg3,
+                           bool *errp = nullptr) {
+    if (cell->type.in(ID($mux), ID($_MUX_)))
+      return const_mux(arg1, arg2, arg3);
+    if (cell->type == ID($bwmux))
+      return const_bwmux(arg1, arg2, arg3);
+    if (cell->type == ID($pmux))
+      return const_pmux(arg1, arg2, arg3);
+    if (cell->type == ID($_AOI3_))
+      return eval_not(const_or(const_and(arg1, arg2, false, false, 1), arg3,
+                               false, false, 1));
+    if (cell->type == ID($_OAI3_))
+      return eval_not(const_and(const_or(arg1, arg2, false, false, 1), arg3,
+                                false, false, 1));
+
+    // log_assert(arg3.bits.size() == 0);
+    return eval(cell, arg1, arg2, errp);
+  }
+
+  static RTLIL::Const eval(RTLIL::Cell *cell, const RTLIL::Const &arg1,
+                           const RTLIL::Const &arg2, const RTLIL::Const &arg3,
+                           const RTLIL::Const &arg4, bool *errp = nullptr) {
+    if (cell->type == ID($_AOI4_))
+      return eval_not(const_or(const_and(arg1, arg2, false, false, 1),
+                               const_and(arg3, arg4, false, false, 1), false,
+                               false, 1));
+    if (cell->type == ID($_OAI4_))
+      return eval_not(const_and(const_or(arg1, arg2, false, false, 1),
+                                const_or(arg3, arg4, false, false, 1), false,
+                                false, 1));
+
+    // log_assert(arg4.bits.size() == 0);
+    return eval(cell, arg1, arg2, arg3, errp);
+  }
+};
+
+RTLIL::IdString new_id(std::string file, int line, std::string func);
+
+RTLIL::IdString new_id_suffix(std::string file, int line, std::string func,
+                              std::string suffix);
 
 } // namespace yosys_mini

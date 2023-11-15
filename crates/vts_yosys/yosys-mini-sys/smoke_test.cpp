@@ -4,8 +4,8 @@
 
 int main() {
   auto design = yosys_design_new();
-  printf("allocated design at %p", design);
+  printf("allocated design at %p\n", design);
   yosys_design_delete(design);
   design = nullptr;
-  printf("design deleted");
+  printf("design deleted\n");
 }

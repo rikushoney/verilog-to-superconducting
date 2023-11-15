@@ -3,15 +3,22 @@ cmake_minimum_required(VERSION 3.20)
 project(mini-yosys)
 
 set(yosys_mini_sources
+  bigint.cpp
+  sha1.cpp
   rtlil.cpp
   verilog.cpp
+  verilog_parser.cpp
+  verilog_lexer.cpp
   wrapper.cpp
   yosys_mini.cpp
 )
 
 set(yosys_mini_headers
+  bigint.h
+  sha1.h
   rtlil.h
   verilog.h
+  verilog_parser.h
   wrapper.h
   yosys_mini.h
 )
