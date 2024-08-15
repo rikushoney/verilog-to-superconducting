@@ -1,7 +1,6 @@
 # The Verilog-To-Superconducting (VTS) project
 
-VTS is a framework for SFPGA (superconducting field-programmable gate array)
-architecture exploration.
+Moved to [VTS](https://github.com/rikushoney/vts).
 
 ## License
 
